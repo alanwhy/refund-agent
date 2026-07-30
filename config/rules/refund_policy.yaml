@@ -1,0 +1,6 @@
+version: 1
+return_window_days: 7
+eligible_order_statuses:
+  - DELIVERED
+blocked_product_tags:
+  - FINAL_SALE

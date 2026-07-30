@@ -1,0 +1,47 @@
+from enum import StrEnum
+
+
+class UserRole(StrEnum):
+    CUSTOMER = "CUSTOMER"
+    APPROVER = "APPROVER"
+    ADMIN = "ADMIN"
+
+
+class TicketIntent(StrEnum):
+    REFUND = "REFUND"
+    EXCHANGE = "EXCHANGE"
+    EXCEPTION = "EXCEPTION"
+    CONSULTATION = "CONSULTATION"
+
+
+class TicketStatus(StrEnum):
+    CREATED = "CREATED"
+    RUNNING = "RUNNING"
+    WAITING_APPROVAL = "WAITING_APPROVAL"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+    COMPLETED = "COMPLETED"
+    REJECTED = "REJECTED"
+    FAILED = "FAILED"
+
+
+class RefundStatus(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    PROCESSING = "PROCESSING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ApprovalStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    TRANSFERRED = "TRANSFERRED"
+    ESCALATED = "ESCALATED"
+
+
+class ApprovalDecision(StrEnum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    MODIFY_APPROVE = "MODIFY_APPROVE"
+    TRANSFER = "TRANSFER"

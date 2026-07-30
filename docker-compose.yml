@@ -1,0 +1,106 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: refund
+      POSTGRES_USER: refund
+      POSTGRES_PASSWORD: refund
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refund -d refund"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    image: refund-agent-backend:local
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+      LLM_MODE: ${LLM_MODE:-fake}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    command: uvicorn refund_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - ./config:/config:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    image: refund-agent-backend:local
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+      LLM_MODE: ${LLM_MODE:-fake}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+    command: celery -A refund_agent.worker.celery_app worker --loglevel=INFO
+    volumes:
+      - ./backend:/app
+      - ./config:/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  scheduler:
+    build: ./backend
+    image: refund-agent-backend:local
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+      LLM_MODE: ${LLM_MODE:-fake}
+    command: celery -A refund_agent.worker.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - ./backend:/app
+      - ./config:/config:ro
+    depends_on:
+      - worker
+
+  web:
+    build: ./frontend
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data:

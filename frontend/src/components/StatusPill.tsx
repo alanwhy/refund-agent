@@ -1,6 +1,7 @@
 const labels: Record<string, string> = {
   CREATED: "已受理",
   RUNNING: "处理中",
+  WAITING_USER: "待补充信息",
   WAITING_APPROVAL: "等待审批",
   MANUAL_REVIEW: "人工核查",
   COMPLETED: "已完成",

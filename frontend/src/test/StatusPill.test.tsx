@@ -7,4 +7,9 @@ describe("StatusPill", () => {
     render(<StatusPill status="WAITING_APPROVAL" />);
     expect(screen.getByText("等待审批")).toBeInTheDocument();
   });
+
+  it("renders the user-input wait state", () => {
+    render(<StatusPill status="WAITING_USER" />);
+    expect(screen.getByText("待补充信息")).toBeInTheDocument();
+  });
 });

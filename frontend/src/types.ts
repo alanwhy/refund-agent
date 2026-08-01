@@ -20,11 +20,28 @@ export interface Message {
   created_at: string;
 }
 
+export interface PolicyEvidence {
+  document_id: string;
+  title: string;
+  version: string;
+  excerpt: string;
+}
+
+export interface ChatAccepted {
+  ticket_id: string;
+  conversation_id: string;
+  status: string;
+  waiting_for: string | null;
+  status_url: string;
+}
+
 export interface Ticket {
   id: string;
   conversation_id?: string;
   status: string;
   current_step: string;
+  waiting_for: string | null;
+  current_question: string | null;
   intent: string | null;
   order_number: string | null;
   product_name: string | null;
@@ -37,6 +54,7 @@ export interface Ticket {
   refund_status?: string | null;
   payment_reference?: string | null;
   approval_status?: string | null;
+  policy_evidence?: PolicyEvidence[];
   messages?: Message[];
   created_at: string;
 }

@@ -1,23 +1,55 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { useAuth } from "../auth";
 import { StatusPill } from "../components/StatusPill";
-import type { Ticket } from "../types";
+import type { ChatAccepted, Ticket } from "../types";
+import { buildChatPayload, pollDelayForStatus } from "./customerChatState";
 
 const terminalStates = new Set(["COMPLETED", "REJECTED", "FAILED", "MANUAL_REVIEW"]);
 const steps = [
-  ["created", "申请已受理"],
-  ["order_validation", "订单已核验"],
-  ["policy_check", "政策已校验"],
-  ["risk_check", "风险已评估"],
-  ["refund_execution", "退款执行"],
-  ["completed", "处理完成"]
+  ["collect", "收集退款信息"],
+  ["order", "查询并核验订单"],
+  ["policy", "检索适用政策"],
+  ["risk", "评估退款风险"],
+  ["approval", "确认是否需审批"],
+  ["refund", "执行退款"],
 ] as const;
+
+const stepDescriptions: Record<string, string> = {
+  created: "准备开始处理",
+  waiting_user: "等待你补充必要信息",
+  user_input_submitted: "已收到补充信息",
+  user_input_received: "正在理解补充信息",
+  order_validation: "订单归属已核验",
+  policy_check: "正在匹配退款政策",
+  risk_check: "正在执行风险规则",
+  waiting_approval: "等待售后专员审批",
+  approval_escalated: "审批已升级处理",
+  approval_approved: "审批通过，准备退款",
+  approval_rejected: "审批未通过",
+  completed: "退款处理完成",
+  payment_unknown: "支付结果需人工核查",
+  payment_failed: "退款执行失败",
+  manual_review: "已转交人工核查",
+};
+
+function stepIndex(ticket: Ticket | null): number {
+  if (!ticket) return -1;
+  if (ticket.status === "COMPLETED") return steps.length;
+  const current = ticket.current_step;
+  if (current.includes("refund") || current.includes("payment")) return 5;
+  if (current.includes("approval")) return 4;
+  if (current.includes("risk")) return 3;
+  if (current.includes("policy")) return 2;
+  if (current.includes("order")) return 1;
+  return 0;
+}
 
 export function CustomerChatPage() {
   const { token } = useAuth();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [active, setActive] = useState<Ticket | null>(null);
+  const [selectedTicketId, setSelectedTicketId] = useState<string | undefined>();
   const [message, setMessage] = useState("我想退货，订单号 ORD-399");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -27,54 +59,72 @@ export function CustomerChatPage() {
       if (!token) return;
       const list = await api<Ticket[]>("/tickets", {}, token);
       setTickets(list);
-      const targetId = preferredId ?? active?.id ?? list[0]?.id;
-      if (targetId) {
-        const detail = await api<Ticket>("/tickets/" + targetId, {}, token);
-        setActive(detail);
+      const targetId = preferredId ?? selectedTicketId ?? list[0]?.id;
+      if (!targetId) {
+        setActive(null);
+        return;
       }
+      const detail = await api<Ticket>("/tickets/" + targetId, {}, token);
+      setSelectedTicketId(targetId);
+      setActive(detail);
     },
-    [token, active?.id]
+    [token, selectedTicketId],
   );
 
   useEffect(() => {
     void refresh().catch((reason) =>
-      setError(reason instanceof Error ? reason.message : "工单加载失败")
+      setError(reason instanceof Error ? reason.message : "工单加载失败"),
     );
   }, [refresh]);
 
   useEffect(() => {
-    if (!active || terminalStates.has(active.status) || active.status === "WAITING_APPROVAL") return;
-    const timer = window.setInterval(() => void refresh(active.id), 1800);
-    return () => window.clearInterval(timer);
+    if (!active) return;
+    const delay = pollDelayForStatus(active.status);
+    if (delay === null) return;
+    const timer = window.setTimeout(() => {
+      void refresh(active.id).catch((reason) =>
+        setError(reason instanceof Error ? reason.message : "工单刷新失败"),
+      );
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [active, refresh]);
 
+  const canSend =
+    !active || terminalStates.has(active.status) || active.status === "WAITING_USER";
+
   async function send() {
-    if (!token || !message.trim()) return;
+    if (!token || !message.trim() || !canSend) return;
     setSending(true);
     setError("");
     try {
-      const accepted = await api<{ ticket_id: string }>("/chat/messages", {
-        method: "POST",
-        body: JSON.stringify({ content: message })
-      }, token);
+      const accepted = await api<ChatAccepted>(
+        "/chat/messages",
+        {
+          method: "POST",
+          body: JSON.stringify(buildChatPayload(message.trim(), active)),
+        },
+        token,
+      );
       setMessage("");
       await refresh(accepted.ticket_id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "申请未发送");
+      if (reason instanceof ApiError && reason.status === 409 && active) {
+        setError("工单状态已更新，正在为你刷新。请查看最新提示后再继续。 ");
+        await refresh(active.id);
+      } else {
+        setError(reason instanceof Error ? reason.message : "申请未发送");
+      }
     } finally {
       setSending(false);
     }
   }
 
-  const activeStep = useMemo(() => {
-    if (!active) return -1;
-    if (active.status === "COMPLETED") return steps.length;
-    if (active.current_step.includes("refund")) return 4;
-    if (active.current_step.includes("risk") || active.current_step.includes("approval")) return 3;
-    if (active.current_step.includes("policy")) return 2;
-    if (active.current_step.includes("order")) return 1;
-    return 0;
-  }, [active]);
+  const activeStep = useMemo(() => stepIndex(active), [active]);
+  const waitingForUser = active?.status === "WAITING_USER";
+  const composerLabel = waitingForUser ? "补充信息" : "退款需求";
+  const composerPlaceholder = waitingForUser
+    ? active.current_question ?? "请补充订单号或退款原因"
+    : "例如：我想退货，订单号 ORD-399";
 
   return (
     <div className="workspace customer-workspace">
@@ -131,7 +181,7 @@ export function CustomerChatPage() {
                       >
                         {item}
                       </button>
-                    )
+                    ),
                   )}
                 </div>
               </div>
@@ -146,24 +196,38 @@ export function CustomerChatPage() {
               <p>{item.content}</p>
             </div>
           ))}
-          {active && !terminalStates.has(active.status) && active.status !== "WAITING_APPROVAL" && (
+          {waitingForUser && active.current_question && (
+            <div className="agent-question" role="status">
+              <small>需要你补充</small>
+              <strong>{active.current_question}</strong>
+              <span>你的回答会继续当前工单，不会新建一张工单。</span>
+            </div>
+          )}
+          {active?.status === "WAITING_APPROVAL" && (
+            <div className="approval-wait-note">
+              <strong>审批进行中</strong>
+              <span>页面会低频检查结果，批准后自动继续退款，无需手动刷新。</span>
+            </div>
+          )}
+          {active && pollDelayForStatus(active.status) === 1_800 && (
             <div className="processing-note">
               <i />
-              正在核验订单与退款规则…
+              正在核验订单、政策与风险…
             </div>
           )}
         </div>
 
         {error && <p className="error-banner">{error}</p>}
-        <div className="composer">
-          <label htmlFor="refund-message">退款需求</label>
+        <div className={waitingForUser ? "composer composer--waiting" : "composer"}>
+          <label htmlFor="refund-message">{composerLabel}</label>
           <div>
             <textarea
               id="refund-message"
               value={message}
               onChange={(event) => setMessage(event.target.value)}
-              placeholder="例如：我想退货，订单号 ORD-399"
+              placeholder={composerPlaceholder}
               rows={2}
+              disabled={!canSend || sending}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
@@ -171,11 +235,17 @@ export function CustomerChatPage() {
                 }
               }}
             />
-            <button className="primary-button" onClick={send} disabled={sending || !message.trim()}>
-              {sending ? "发送中…" : "提交申请"}
+            <button
+              className="primary-button"
+              onClick={send}
+              disabled={sending || !message.trim() || !canSend}
+            >
+              {sending ? "发送中…" : waitingForUser ? "继续处理" : "提交申请"}
             </button>
           </div>
-          <small>Enter 发送，Shift + Enter 换行</small>
+          <small>
+            {canSend ? "Enter 发送，Shift + Enter 换行" : "当前工单处理中，完成后可发起新申请"}
+          </small>
         </div>
       </section>
 
@@ -193,17 +263,31 @@ export function CustomerChatPage() {
               <i>{index < activeStep ? "✓" : index + 1}</i>
               <span>
                 <strong>{label}</strong>
-                {index === activeStep && <small>{active?.current_step ?? "等待开始"}</small>}
+                {index === activeStep && (
+                  <small>{stepDescriptions[active?.current_step ?? ""] ?? "正在处理"}</small>
+                )}
               </span>
             </li>
           ))}
         </ol>
         {active?.calculated_amount && (
           <div className="amount-slip">
-            <small>核算退款金额</small>
+            <small>规则核算退款金额</small>
             <strong>¥{active.approved_amount ?? active.calculated_amount}</strong>
             <span>{active.order_number}</span>
           </div>
+        )}
+        {active?.policy_evidence && active.policy_evidence.length > 0 && (
+          <section className="policy-evidence" aria-label="适用政策">
+            <strong>适用政策</strong>
+            {active.policy_evidence.map((evidence) => (
+              <article key={evidence.document_id + evidence.version}>
+                <span>版本 {evidence.version}</span>
+                <h3>{evidence.title}</h3>
+                <p>{evidence.excerpt}</p>
+              </article>
+            ))}
+          </section>
         )}
         {active?.risk_reasons && active.risk_reasons.length > 0 && (
           <div className="risk-note">

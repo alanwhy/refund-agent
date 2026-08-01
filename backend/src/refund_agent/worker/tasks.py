@@ -3,24 +3,35 @@ from datetime import UTC, datetime
 from redis import Redis
 from sqlalchemy import select
 
+from refund_agent.agent.runtime import get_runtime
 from refund_agent.audit.service import append_audit
 from refund_agent.domain.enums import ApprovalStatus, TicketStatus
 from refund_agent.infrastructure.database import SessionLocal
 from refund_agent.models import ApprovalTask, Ticket
 from refund_agent.worker.celery_app import celery_app
-from refund_agent.workflows.refund import RefundWorkflow
 
 
 @celery_app.task(  # type: ignore[untyped-decorator]
     name="refund_agent.run_workflow", bind=True, max_retries=2
 )
-def run_workflow(self, ticket_id: str, resume: bool = False) -> None:  # type: ignore[no-untyped-def]
+def run_workflow(  # type: ignore[no-untyped-def]
+    self,
+    ticket_id: str,
+    operation: str = "start",
+    payload: dict[str, object] | None = None,
+) -> None:
     redis = Redis.from_url(celery_app.conf.broker_url)
     lock = redis.lock(f"ticket:{ticket_id}", timeout=120, blocking_timeout=2)
     if not lock.acquire(blocking=True):
         raise self.retry(countdown=2)
     try:
-        RefundWorkflow().run(ticket_id, resume=resume)
+        runtime = get_runtime()
+        if operation == "start":
+            runtime.start(ticket_id)
+        elif operation == "resume":
+            runtime.resume(ticket_id, dict(payload or {}))
+        else:
+            raise ValueError(f"Unknown workflow operation: {operation}")
     finally:
         if lock.owned():
             lock.release()

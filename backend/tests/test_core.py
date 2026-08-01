@@ -1,17 +1,8 @@
 from decimal import Decimal
 
-from refund_agent.adapters.llm import FakeLLMClient
 from refund_agent.audit.service import redact
-from refund_agent.domain.enums import TicketIntent
 from refund_agent.models import Order
 from refund_agent.rules.engine import evaluate_risk
-
-
-def test_fake_llm_extracts_refund_order() -> None:
-    result = FakeLLMClient().classify("我要退款，订单 ORD-399")
-    assert result.intent == TicketIntent.REFUND
-    assert result.order_number == "ORD-399"
-    assert result.confidence > 0.9
 
 
 def test_amount_boundary_is_deterministic() -> None:

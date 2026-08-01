@@ -1,4 +1,7 @@
-FROM python:3.12-slim
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
+
+USER root
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -12,8 +15,11 @@ RUN pip install --no-cache-dir -e ".[dev]"
 COPY src ./src
 COPY prompts ./prompts
 COPY tests ./tests
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
 
-RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+RUN id -u appuser >/dev/null 2>&1 || useradd --create-home --uid 10001 appuser
+RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000

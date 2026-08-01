@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from sqlalchemy import select
 
 from refund_agent.api.dependencies import CurrentUser, DbSession
@@ -32,42 +32,86 @@ def _assert_ticket_access(ticket: Ticket, user: CurrentUser) -> None:
 @router.post("/chat/messages", response_model=ChatAccepted, status_code=202)
 def send_message(
     payload: ChatRequest,
+    response: Response,
     db: DbSession,
     user: CurrentUser,
 ) -> ChatAccepted:
     if user.role != UserRole.CUSTOMER:
         raise HTTPException(status_code=403, detail="Only customers can start conversations")
-    conversation = (
-        db.get(Conversation, payload.conversation_id) if payload.conversation_id else None
-    )
-    if conversation is not None and conversation.customer_id != user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    if conversation is None:
-        conversation = Conversation(customer_id=user.id)
-        db.add(conversation)
+    dedup_key = f"user:{user.id}:{payload.request_id}"
+    existing_message = db.scalar(select(Message).where(Message.dedup_key == dedup_key))
+    if existing_message is not None:
+        ticket = db.scalar(
+            select(Ticket).where(Ticket.conversation_id == existing_message.conversation_id)
+        )
+        if ticket is None or ticket.customer_id != user.id:
+            raise HTTPException(status_code=409, detail="Duplicate request has no ticket")
+        conversation = db.get(Conversation, ticket.conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=409, detail="Duplicate request has no conversation")
+    elif payload.ticket_id:
+        ticket = db.scalar(select(Ticket).where(Ticket.id == payload.ticket_id).with_for_update())
+        if ticket is None or ticket.customer_id != user.id:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if ticket.status != "WAITING_USER":
+            raise HTTPException(status_code=409, detail="Ticket is not waiting for user input")
+        conversation = db.get(Conversation, ticket.conversation_id)
+        if conversation is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        db.add(
+            Message(
+                conversation_id=conversation.id,
+                sender="USER",
+                content=payload.content,
+                dedup_key=dedup_key,
+            )
+        )
+        ticket.status = "RUNNING"
+        ticket.current_step = "user_input_submitted"
+        db.commit()
+        run_workflow.delay(
+            ticket.id,
+            "resume",
+            {"kind": "user_input", "message": payload.content},
+        )
+    else:
+        conversation = (
+            db.get(Conversation, payload.conversation_id) if payload.conversation_id else None
+        )
+        if conversation is not None and conversation.customer_id != user.id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation is None:
+            conversation = Conversation(customer_id=user.id)
+            db.add(conversation)
+            db.flush()
+        message = Message(
+            conversation_id=conversation.id,
+            sender="USER",
+            content=payload.content,
+            dedup_key=dedup_key,
+        )
+        ticket = Ticket(customer_id=user.id, conversation_id=conversation.id)
+        db.add_all([message, ticket])
         db.flush()
-    message = Message(
-        conversation_id=conversation.id,
-        sender="USER",
-        content=payload.content,
-    )
-    ticket = Ticket(customer_id=user.id, conversation_id=conversation.id)
-    db.add_all([message, ticket])
-    db.flush()
-    append_audit(
-        db,
-        action="ticket.created",
-        entity_type="ticket",
-        entity_id=ticket.id,
-        ticket_id=ticket.id,
-        actor_id=user.id,
-    )
-    db.commit()
-    run_workflow.delay(ticket.id, False)
+        append_audit(
+            db,
+            action="ticket.created",
+            entity_type="ticket",
+            entity_id=ticket.id,
+            ticket_id=ticket.id,
+            actor_id=user.id,
+            event_key=f"{ticket.id}:created",
+        )
+        db.commit()
+        run_workflow.delay(ticket.id, "start", None)
+    status_url = f"/api/tickets/{ticket.id}"
+    response.headers["Location"] = status_url
     return ChatAccepted(
         ticket_id=ticket.id,
         conversation_id=conversation.id,
         status=ticket.status,
+        waiting_for=ticket.waiting_for,
+        status_url=status_url,
     )
 
 
@@ -77,6 +121,8 @@ def _summary(db: DbSession, ticket: Ticket) -> TicketSummary:
         id=ticket.id,
         status=ticket.status,
         current_step=ticket.current_step,
+        waiting_for=ticket.waiting_for,
+        current_question=ticket.current_question,
         intent=ticket.intent,
         order_number=order.order_number if order else None,
         product_name=order.product_name if order else None,
@@ -123,5 +169,6 @@ def ticket_detail(ticket_id: str, db: DbSession, user: CurrentUser) -> TicketDet
         refund_status=refund.status if refund else None,
         payment_reference=refund.payment_reference if refund else None,
         approval_status=approval.status if approval else None,
+        policy_evidence=ticket.policy_evidence or [],
         messages=[MessageView.model_validate(message) for message in messages],
     )

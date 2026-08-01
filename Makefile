@@ -1,4 +1,4 @@
-.PHONY: up down logs test lint typecheck
+.PHONY: up down logs test lint typecheck smoke-model
 
 up:
 	docker compose up --build
@@ -20,3 +20,7 @@ lint:
 typecheck:
 	docker compose run --rm api mypy src
 	docker compose run --rm web npm run typecheck
+
+smoke-model:
+	docker compose run --rm -e RUN_REAL_MODEL_SMOKE=1 api \
+		pytest -q tests/smoke/test_real_model_gateway.py

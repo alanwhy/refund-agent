@@ -1,3 +1,14 @@
+x-backend-environment: &backend-environment
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
+  LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-2}
+  AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-6}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -21,17 +32,26 @@ services:
       timeout: 3s
       retries: 20
 
+  migrate:
+    build: ./backend
+    image: refund-agent-backend:local
+    environment:
+      <<: *backend-environment
+      SERVICE_ROLE: migrate
+    command: python -m refund_agent.infrastructure.migrations
+    volumes:
+      - ./backend:/app
+      - ./config:/config:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: ./backend
     image: refund-agent-backend:local
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
-      LLM_MODE: ${LLM_MODE:-fake}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      <<: *backend-environment
+      SERVICE_ROLE: api
     command: uvicorn refund_agent.api.app:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./backend:/app
@@ -50,8 +70,8 @@ services:
       timeout: 3s
       retries: 20
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -59,20 +79,15 @@ services:
     build: ./backend
     image: refund-agent-backend:local
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
-      LLM_MODE: ${LLM_MODE:-fake}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      <<: *backend-environment
+      SERVICE_ROLE: worker
     command: celery -A refund_agent.worker.celery_app worker --loglevel=INFO
     volumes:
       - ./backend:/app
       - ./config:/config:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -83,7 +98,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://refund:refund@postgres:5432/refund}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       JWT_SECRET: ${JWT_SECRET:-local-demo-secret-change-me}
-      LLM_MODE: ${LLM_MODE:-fake}
+      SERVICE_ROLE: scheduler
     command: celery -A refund_agent.worker.celery_app beat --loglevel=INFO --schedule=/tmp/celerybeat-schedule
     volumes:
       - ./backend:/app

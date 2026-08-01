@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -27,12 +28,16 @@ class LoginResponse(BaseModel):
 class ChatRequest(BaseModel):
     content: str = Field(min_length=2, max_length=2000)
     conversation_id: str | None = None
+    ticket_id: str | None = None
+    request_id: str = Field(default_factory=lambda: str(uuid4()), min_length=8, max_length=100)
 
 
 class ChatAccepted(BaseModel):
     ticket_id: str
     conversation_id: str
     status: str
+    waiting_for: str | None = None
+    status_url: str
 
 
 class MessageView(BaseModel):
@@ -48,6 +53,8 @@ class TicketSummary(BaseModel):
     id: str
     status: str
     current_step: str
+    waiting_for: str | None
+    current_question: str | None
     intent: str | None
     order_number: str | None
     product_name: str | None
@@ -65,6 +72,7 @@ class TicketDetail(TicketSummary):
     refund_status: str | None
     payment_reference: str | None
     approval_status: str | None
+    policy_evidence: list[dict[str, object]]
     messages: list[MessageView]
 
 

@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from refund_agent.models import AuditEvent
@@ -30,7 +31,14 @@ def append_audit(
     ticket_id: str | None = None,
     actor_id: str | None = None,
     details: dict[str, Any] | None = None,
+    event_key: str | None = None,
+    run_id: str | None = None,
+    node_name: str | None = None,
 ) -> AuditEvent:
+    if event_key:
+        existing = db.scalar(select(AuditEvent).where(AuditEvent.event_key == event_key))
+        if existing is not None:
+            return existing
     event = AuditEvent(
         action=action,
         entity_type=entity_type,
@@ -38,6 +46,9 @@ def append_audit(
         ticket_id=ticket_id,
         actor_id=actor_id,
         details=redact(details or {}),
+        event_key=event_key,
+        run_id=run_id,
+        node_name=node_name,
     )
     db.add(event)
     return event

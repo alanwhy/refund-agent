@@ -8,15 +8,11 @@ from fastapi.responses import JSONResponse
 
 from refund_agent.api.routes import approvals, audit, auth, health, tickets
 from refund_agent.config import get_settings
-from refund_agent.infrastructure.database import SessionLocal, create_schema
-from refund_agent.seed import seed_demo_data
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    create_schema()
-    with SessionLocal() as db:
-        seed_demo_data(db)
+    get_settings().require_model_config()
     yield
 
 

@@ -16,7 +16,13 @@ def health() -> dict[str, str]:
 @router.get("/ready")
 def ready(response: Response) -> dict[str, object]:
     settings = get_settings()
-    checks: dict[str, bool] = {"database": False, "redis": False, "llm_config": True}
+    checks: dict[str, bool] = {
+        "database": False,
+        "redis": False,
+        "model_config": bool(
+            settings.llm_base_url and settings.llm_api_key and settings.llm_model
+        ),
+    }
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
@@ -27,8 +33,6 @@ def ready(response: Response) -> dict[str, object]:
         checks["redis"] = bool(Redis.from_url(settings.redis_url).ping())
     except Exception:
         pass
-    if settings.llm_mode == "compatible":
-        checks["llm_config"] = bool(settings.openai_api_key and settings.openai_model)
     ok = all(checks.values())
     if not ok:
         response.status_code = 503

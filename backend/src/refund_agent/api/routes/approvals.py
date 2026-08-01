@@ -140,6 +140,7 @@ def decide_approval(
                 conversation_id=ticket.conversation_id,
                 sender="ASSISTANT",
                 content="退款申请未获批准。如需进一步帮助，请联系人工客服。",
+                dedup_key=f"{ticket.id}:terminal:{TicketStatus.REJECTED}",
             )
         )
     elif decision == ApprovalDecision.TRANSFER:
@@ -159,6 +160,10 @@ def decide_approval(
     )
     db.commit()
     db.refresh(approval)
-    if decision in {ApprovalDecision.APPROVE, ApprovalDecision.MODIFY_APPROVE}:
-        run_workflow.delay(ticket.id, True)
+    if decision != ApprovalDecision.TRANSFER:
+        run_workflow.delay(
+            ticket.id,
+            "resume",
+            {"kind": "approval", "approval_id": approval.id, "version": approval.version},
+        )
     return _view(db, approval)

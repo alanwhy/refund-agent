@@ -61,6 +61,7 @@ class Message(Base):
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     sender: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    dedup_key: Mapped[str | None] = mapped_column(String(160), unique=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -75,13 +76,17 @@ class Ticket(Base):
     intent_confidence: Mapped[float | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="CREATED", index=True)
     current_step: Mapped[str] = mapped_column(String(64), default="created")
+    waiting_for: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    current_question: Mapped[str | None] = mapped_column(Text, nullable=True)
     requested_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     calculated_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     approved_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     risk_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     risk_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     matched_rule_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    policy_evidence: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     rule_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    graph_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     version: Mapped[int] = mapped_column(default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -124,19 +129,6 @@ class ApprovalTask(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
-class WorkflowCheckpoint(Base):
-    __tablename__ = "workflow_checkpoints"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), unique=True, index=True)
-    step: Mapped[str] = mapped_column(String(64))
-    state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow, onupdate=utcnow
-    )
-
-
 class AuditEvent(Base):
     __tablename__ = "audit_events"
 
@@ -149,6 +141,9 @@ class AuditEvent(Base):
     entity_type: Mapped[str] = mapped_column(String(50))
     entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    event_key: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    node_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     trace_id: Mapped[str] = mapped_column(String(36), default=new_id, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

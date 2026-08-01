@@ -1,193 +1,137 @@
 # 归舟 · 智能退换货 Agent
 
-一个可本地运行、可审计、支持人工审批暂停与恢复的退货退款 Agent MVP。
+一个可本地运行、可审计、支持多轮补问和人工审批暂停/恢复的退款 Agent。当前实现聚焦退款
+主线；换货与异常场景转人工处理。
 
-系统使用 FastAPI、LangGraph、Celery、PostgreSQL、Redis 和 React。订单、物流与支付接口为可控 Mock；默认使用确定性 Fake LLM，因此无需 API Key 即可完成演示。
+> 这是架构与流程演示项目。订单、物流和支付为可控 Mock，不得直接接入真实资金系统。
 
-> 这是架构与流程演示项目，不得直接接入真实资金系统。
+## 它和普通工作流的区别
 
-## 核心能力
+模型不再只做一次意图识别。Refund Agent 可以在最多 6 个步骤内自主选择只读工具，查询
+订单、物流、政策和退款历史；信息不足时暂停并向用户追问。LangGraph 保存消息和执行位置，
+让用户回答或人工审批后从原位置继续。
 
-- 低风险退款自动处理；
-- 金额大于 500 元或命中欺诈规则时暂停并等待人工审批；
-- 审批通过后从持久化检查点恢复；
-- 支付结果未知时冻结自动重试并转人工；
-- JWT 三角色权限：客户、审批员、管理员；
-- 客户对话、审批工作台和审计记录三个页面；
-- 订单归属、退款上限、幂等与审批并发均由确定性代码校验；
-- OpenAI 兼容模型接口可配置，测试与默认演示无需联网。
+模型没有资金权限。订单归属、退款资格、金额上限、风险、审批状态和支付执行始终由确定性
+代码与数据库事实控制。
 
-## 架构
-
-~~~mermaid
+```mermaid
 flowchart LR
     WEB["React Web"] --> API["FastAPI"]
-    API --> PG["PostgreSQL"]
-    API --> REDIS["Redis"]
+    API --> PG["PostgreSQL 业务事实"]
+    API --> REDIS["Redis / Celery"]
     REDIS --> WORKER["Celery Worker"]
-    WORKER --> GRAPH["LangGraph"]
-    GRAPH --> RULES["政策与风险规则"]
-    GRAPH --> MOCKS["订单 / 支付 / 知识库适配器"]
-    GRAPH --> PG
-~~~
+    WORKER --> GRAPH["LangGraph Agent"]
+    GRAPH --> TOOLS["只读工具白名单"]
+    GRAPH --> RULES["政策 / 风险 / 支付安全闸门"]
+    GRAPH --> CHECKPOINT["PostgresSaver"]
+    RULES --> PG
+```
 
-Agent 负责理解和组织流程，规则引擎负责最终业务判断。模型不能直接调用支付接口。
+## 本地启动
 
-## 快速启动
+要求 Docker Desktop 或 Colima，以及 Docker Compose。
 
-要求：
+1. 创建本地配置：
 
-- Docker Desktop；
-- Docker Compose。
+   ```bash
+   cp .env.example .env
+   ```
 
-启动全部服务：
+2. 填写统一代理网关：
 
-~~~bash
-docker compose up --build
-~~~
+   ```dotenv
+   LLM_BASE_URL=https://your-gateway.example/v1
+   LLM_API_KEY=your-key
+   LLM_MODEL=your-model
+   ```
+
+   网关需要兼容 OpenAI Chat Completions/tool calling。切换 GPT、Claude、DeepSeek 等模型时，
+   通常只需修改 `LLM_MODEL`；如果网关为不同供应商使用不同入口，同时修改 `LLM_BASE_URL`。
+
+3. 启动：
+
+   ```bash
+   docker compose up --build
+   ```
+
+   `migrate` 会先执行 Alembic、初始化 LangGraph checkpoint 表并写入演示数据；成功后 API 和
+   Worker 才会启动。
 
 打开：
 
 - Web：[http://localhost:5173](http://localhost:5173)
 - API 文档：[http://localhost:8000/docs](http://localhost:8000/docs)
-- 健康检查：[http://localhost:8000/ready](http://localhost:8000/ready)
+- 就绪检查：[http://localhost:8000/ready](http://localhost:8000/ready)
 
-首次启动会自动创建数据库表和演示数据。停止服务：
+停止服务：
 
-~~~bash
+```bash
 docker compose down
-~~~
+```
 
-清空演示数据并重新开始：
+清空本地数据库（会删除所有演示工单和 checkpoint）：
 
-~~~bash
+```bash
 docker compose down -v
-docker compose up --build
-~~~
+```
 
-## 演示账号
+## 演示账号与订单
 
-所有账号的密码都是 **Demo123!**。
+账号密码均为 `Demo123!`。
 
-| 角色 | 邮箱 | 页面 |
+| 角色 | 邮箱 | 用途 |
 | --- | --- | --- |
-| 客户 | customer@example.com | 发起退款、查看处理轨迹 |
+| 客户 | customer@example.com | 对话、补充信息、查看进度 |
 | 审批员 | approver@example.com | 处理高风险退款 |
-| 管理员 | admin@example.com | 查看审批和审计事件 |
-
-密码仅用于本地演示，数据库中保存的是 Argon2 哈希。
-
-## 演示订单
+| 管理员 | admin@example.com | 查看审批和审计 |
 
 | 订单号 | 金额 | 预期行为 |
 | --- | ---: | --- |
 | ORD-399 | ¥399 | 自动退款 |
-| ORD-699 | ¥699 | 暂停并等待审批，批准后恢复 |
-| ORD-199-FRAUD | ¥199 | 命中欺诈信号，等待审批 |
-| ORD-299-UNKNOWN | ¥299 | 支付结果未知，转人工且不重复退款 |
+| ORD-699 | ¥699 | 暂停等待审批，批准后恢复 |
+| ORD-199-FRAUD | ¥199 | 命中风险规则，等待审批 |
+| ORD-299-UNKNOWN | ¥299 | 支付结果未知，转人工且不重试 |
 | ORD-500-OTHER | ¥500 | 属于其他客户，拒绝访问 |
 
-在客户页面输入：
+可以先只输入“我想退款”，观察 Agent 追问订单号，再在同一工单回答。也可以直接输入：
 
-~~~text
-我想退货，订单号 ORD-399
-~~~
+```text
+我想退货，订单号 ORD-399，原因是尺码不合适
+```
 
-## 配置真实兼容模型
+## 测试
 
-默认配置为 LLM_MODE=fake。如需使用 OpenAI 或兼容服务，复制示例环境变量：
-
-~~~bash
-cp .env.example .env
-~~~
-
-设置：
-
-~~~dotenv
-LLM_MODE=compatible
-OPENAI_BASE_URL=https://your-compatible-endpoint/v1
-OPENAI_API_KEY=your-key
-OPENAI_MODEL=your-model
-~~~
-
-然后重新启动 Compose。API Key 不应提交到 Git。
-
-## 业务规则
-
-规则文件位于：
-
-- config/rules/refund_policy.yaml
-- config/rules/risk_rules.yaml
-
-工作流记录每次实际使用的规则内容摘要。默认规则：
-
-- 金额不大于 ¥500 且没有其他风险信号：自动退款；
-- 金额大于 ¥500、欺诈标记、数据冲突或低置信度：人工审批；
-- 审批金额不得高于服务端核算的可退金额；
-- 审批超时进入管理员升级队列，不自动放款。
-
-## 测试与质量检查
-
-启动 PostgreSQL 和 Redis：
-
-~~~bash
+```bash
 docker compose up -d postgres redis
-~~~
+docker compose run --rm migrate
+docker compose run --rm --no-deps api sh -lc \
+  "ruff check src tests migrations && mypy src && pytest -q"
 
-运行后端：
-
-~~~bash
-docker compose run --rm api sh -lc "ruff check src tests && mypy src && pytest -q"
-~~~
-
-运行前端：
-
-~~~bash
 cd frontend
-npm install
 npm run typecheck
 npm run lint
 npm test -- --run
 npm run build
-~~~
+```
 
-当前自动化测试覆盖：
+默认测试使用 `ScriptedModel`，不会消耗模型额度。要显式检查真实网关能否返回标准工具调用：
 
-- 500 元审批边界；
-- 敏感信息脱敏；
-- 自动退款幂等；
-- 高金额审批暂停与恢复；
-- 未知支付结果不自动重试；
-- 登录与管理员接口越权。
-
-## 目录
-
-~~~text
-backend/
-  src/refund_agent/
-    adapters/       外部系统与模型适配器
-    api/            FastAPI 路由与 Schema
-    audit/          只追加审计与脱敏
-    domain/         状态与角色枚举
-    rules/          确定性政策和风险规则
-    workflows/      LangGraph 工作流
-    worker/         Celery 任务和审批升级
-  prompts/          独立管理的提示词
-  tests/            后端测试
-frontend/
-  src/              React 页面、组件和样式
-config/rules/       可配置业务规则
-docs/superpowers/   设计规格与实施计划
-~~~
+```bash
+make smoke-model
+```
 
 ## 安全边界
 
-- 用户文本始终视为不可信数据；
-- 模型输出必须转换为结构化类型；
-- 支付前重新校验订单归属、退款上限、审批状态和幂等键；
-- 客户只能读取自己的工单；
-- 审批员只能处理未分配或分配给自己的任务；
-- 只有管理员可以读取全链路审计；
-- 密码、Token 和 API Key 在审计写入前脱敏。
+- 用户消息、模型输出和工具 observation 均视为不可信数据；
+- 模型只能调用订单、物流、政策和退款历史四个只读工具；
+- customer ID 由服务端注入，不出现在模型工具参数中；
+- 控制调用不能携带金额、审批结果或支付指令；
+- 支付前重新读取订单归属、金额上限、审批状态和幂等键；
+- 节点重放不会重复创建消息、审批、语义审计事件或退款；
+- API Key 使用 Secret 类型，不进入健康响应和审计详情。
 
-完整设计见 [设计规格](docs/superpowers/specs/2026-07-30-refund-agent-design.md)，实施分解见 [实施计划](docs/superpowers/plans/2026-07-30-refund-agent-implementation.md)。
+进一步阅读：
+
+- [Agent 运行时与本地排障](docs/agent-runtime.md)
+- [Agent/LangGraph 增强设计](docs/superpowers/specs/2026-08-01-agent-langgraph-enhancement-design.md)
+- [实施计划](docs/superpowers/plans/2026-08-01-agent-langgraph-enhancement-implementation.md)

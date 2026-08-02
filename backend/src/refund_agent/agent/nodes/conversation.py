@@ -28,12 +28,16 @@ def _last_ai_message(state: RefundAgentState) -> AIMessage:
     raise ValueError("Agent state has no AI message")
 
 
-def _control_args(state: RefundAgentState, name: str) -> dict[str, Any]:
+def _control_call(state: RefundAgentState, name: str) -> dict[str, Any]:
     message = _last_ai_message(state)
     for call in message.tool_calls:
         if call["name"] == name:
-            return dict(call["args"])
+            return dict(call)
     raise ValueError(f"Missing control call: {name}")
+
+
+def _control_args(state: RefundAgentState, name: str) -> dict[str, Any]:
+    return dict(_control_call(state, name)["args"])
 
 
 def _invalid_call_reason(calls: Sequence[Mapping[str, Any]]) -> str | None:
@@ -188,9 +192,8 @@ def collect_observations(state: RefundAgentState) -> dict[str, Any]:
 
 
 def ask_user(state: RefundAgentState) -> dict[str, Any]:
-    payload = RequestUserInput.model_validate(
-        _control_args(state, RequestUserInput.__name__)
-    )
+    control_call = _control_call(state, RequestUserInput.__name__)
+    payload = RequestUserInput.model_validate(control_call["args"])
     dedup_key = f"{state['ticket_id']}:question:{state['agent_step_count']}"
     with SessionLocal() as db:
         ticket = db.get(Ticket, state["ticket_id"])
@@ -254,7 +257,20 @@ def ask_user(state: RefundAgentState) -> dict[str, Any]:
         )
         db.commit()
     return {
-        "messages": [HumanMessage(content=resumed["message"])],
+        "messages": [
+            ToolMessage(
+                content=json.dumps(
+                    {
+                        "status": "user_input_received",
+                        "answered_fields": payload.missing_fields,
+                    },
+                    ensure_ascii=False,
+                ),
+                name=RequestUserInput.__name__,
+                tool_call_id=str(control_call["id"]),
+            ),
+            HumanMessage(content=resumed["message"]),
+        ],
         "waiting_for": None,
         "current_question": None,
     }

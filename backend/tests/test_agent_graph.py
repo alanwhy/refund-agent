@@ -1,6 +1,7 @@
+import json
 from decimal import Decimal
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
 from support.scripted_model import ScriptedModel
@@ -87,19 +88,29 @@ def test_agent_chooses_read_tools_then_completes_refund() -> None:
 
 def test_agent_interrupts_for_user_input_and_resumes_same_thread() -> None:
     ticket_id = create_ticket("我想退款")
-    runtime = runtime_with(
-        _tool_call(
-            "RequestUserInput",
-            {"question": "请提供订单号和退款原因。", "missing_fields": ["order_number"]},
-            "ask-1",
-        ),
-        _tool_call(
-            "SubmitRefundContext",
-            {"order_number": "ORD-399", "reason": "商品不合适", "requested_action": "REFUND"},
-            "submit-2",
-        ),
-        AIMessage(content="退款 399.00 元已发起，请留意到账通知。"),
+    model = ScriptedModel(
+        responses=[
+            _tool_call(
+                "RequestUserInput",
+                {
+                    "question": "请提供订单号和退款原因。",
+                    "missing_fields": ["order_number"],
+                },
+                "ask-1",
+            ),
+            _tool_call(
+                "SubmitRefundContext",
+                {
+                    "order_number": "ORD-399",
+                    "reason": "商品不合适",
+                    "requested_action": "REFUND",
+                },
+                "submit-2",
+            ),
+            AIMessage(content="退款 399.00 元已发起，请留意到账通知。"),
+        ]
     )
+    runtime = AgentRuntime(graph=build_refund_graph(model, checkpointer=InMemorySaver()))
 
     paused = runtime.start(ticket_id)
     assert paused["__interrupt__"]
@@ -113,6 +124,24 @@ def test_agent_interrupts_for_user_input_and_resumes_same_thread() -> None:
         {"kind": "user_input", "message": "订单号 ORD-399，商品不合适"},
     )
     assert resumed["order_number"] == "ORD-399"
+    second_call = model.captured_messages[1]
+    request = next(
+        message
+        for message in second_call
+        if isinstance(message, AIMessage)
+        and any(call["id"] == "ask-1" for call in message.tool_calls)
+    )
+    request_index = second_call.index(request)
+    assert isinstance(second_call[request_index + 1], ToolMessage)
+    tool_result = second_call[request_index + 1]
+    assert tool_result.tool_call_id == "ask-1"
+    assert tool_result.name == "RequestUserInput"
+    assert json.loads(str(tool_result.content)) == {
+        "answered_fields": ["order_number"],
+        "status": "user_input_received",
+    }
+    assert isinstance(second_call[request_index + 2], HumanMessage)
+    assert second_call[request_index + 2].content == "订单号 ORD-399，商品不合适"
     with SessionLocal() as db:
         ticket = db.get(Ticket, ticket_id)
         assert ticket is not None

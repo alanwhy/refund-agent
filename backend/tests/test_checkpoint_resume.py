@@ -1,4 +1,4 @@
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres import PostgresSaver
 from support.scripted_model import ScriptedModel
 from test_agent_graph import _tool_call, create_ticket
@@ -51,6 +51,18 @@ def test_postgres_checkpoint_survives_runtime_restart() -> None:
     )
     second_runtime.resume(ticket_id, {"kind": "user_input", "message": "ORD-399，不合适"})
     second_runtime.close()
+
+    resumed_messages = second_model.captured_messages[0]
+    matching_tool_results = [
+        message
+        for message in resumed_messages
+        if isinstance(message, ToolMessage)
+        and message.tool_call_id == "checkpoint-ask"
+    ]
+    assert len(matching_tool_results) == 1
+    tool_index = resumed_messages.index(matching_tool_results[0])
+    assert isinstance(resumed_messages[tool_index - 1], AIMessage)
+    assert isinstance(resumed_messages[tool_index + 1], HumanMessage)
 
     with SessionLocal() as db:
         ticket = db.get(Ticket, ticket_id)

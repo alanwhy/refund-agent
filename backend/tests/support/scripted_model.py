@@ -12,6 +12,7 @@ from pydantic import Field
 class ScriptedModel(BaseChatModel):
     responses: list[AIMessage] = Field(default_factory=list)
     bound_tool_names: list[str] = Field(default_factory=list)
+    captured_messages: list[list[BaseMessage]] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -39,7 +40,8 @@ class ScriptedModel(BaseChatModel):
         run_manager: Any | None = None,
         **kwargs: Any,
     ) -> ChatResult:
-        del messages, stop, run_manager, kwargs
+        del stop, run_manager, kwargs
+        self.captured_messages.append(list(messages))
         queue = deque(self.responses)
         if not queue:
             raise RuntimeError("ScriptedModel has no remaining responses")

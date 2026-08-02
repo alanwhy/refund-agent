@@ -31,6 +31,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=2, max_length=2000)
     conversation_id: str | None = None
     ticket_id: str | None = None
+    order_id: str | None = None
     request_id: str = Field(default_factory=lambda: str(uuid4()), min_length=8, max_length=100)
 
 
@@ -112,6 +113,8 @@ class AuditView(BaseModel):
     entity_type: str
     entity_id: str | None
     details: dict[str, object]
+    run_id: str | None
+    node_name: str | None
     trace_id: str
     created_at: datetime
 
@@ -155,6 +158,7 @@ class OrderView(BaseModel):
     product_name: str
     amount: Decimal
     status: str
+    lifecycle_status: str
     delivered_at: datetime
     customer_id: str | None = None
     customer_name: str | None = None
@@ -180,6 +184,7 @@ class DemoOrderCreateRequest(BaseModel):
 
     customer_id: str
     product_name: str = Field(min_length=2, max_length=100)
+    amount: Decimal = Field(gt=Decimal("0"), le=Decimal("999999.99"), decimal_places=2)
     scenario: DemoOrderScenario
     request_id: str = Field(min_length=8, max_length=100)
 

@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
@@ -15,6 +17,7 @@ def list_audit_events(
     db: DbSession,
     ticket_id: str | None = None,
     action: str | None = None,
+    category: Literal["model", "business"] | None = None,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[AuditEvent]:
     statement = select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(limit)
@@ -22,4 +25,8 @@ def list_audit_events(
         statement = statement.where(AuditEvent.ticket_id == ticket_id)
     if action:
         statement = statement.where(AuditEvent.action == action)
+    if category == "model":
+        statement = statement.where(AuditEvent.entity_type == "model")
+    elif category == "business":
+        statement = statement.where(AuditEvent.entity_type != "model")
     return list(db.scalars(statement))

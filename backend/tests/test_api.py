@@ -8,7 +8,7 @@ from test_agent_graph import create_ticket
 
 from refund_agent.api.app import app
 from refund_agent.infrastructure.database import SessionLocal
-from refund_agent.models import ApprovalTask, Message, Order, Ticket
+from refund_agent.models import ApprovalTask, Message, Order, Ticket, User
 
 
 def test_health_and_login() -> None:
@@ -81,6 +81,57 @@ def test_chat_returns_accepted_resource_and_resumes_waiting_ticket(monkeypatch) 
         )
         assert resumed.status_code == 202
         assert dispatched[-1][1] == "resume"
+
+
+def test_customer_starts_after_sales_from_owned_order_only_once(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr("refund_agent.api.routes.tickets.run_workflow.delay", lambda *args: None)
+    with SessionLocal() as db:
+        customer = db.scalar(select(User).where(User.email == "customer@example.com"))
+        other_order = db.scalar(select(Order).where(Order.order_number == "ORD-500-OTHER"))
+        assert customer is not None and other_order is not None
+        order = Order(
+            order_number=f"ORD-AFTER-SALES-{uuid4().hex[:8].upper()}",
+            customer_id=customer.id,
+            product_name="售后入口测试商品",
+            amount=Decimal("88.00"),
+            delivered_at=datetime.now(UTC) - timedelta(days=1),
+        )
+        db.add(order)
+        db.commit()
+        order_id = order.id
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"email": "customer@example.com", "password": "Demo123!"},
+        ).json()
+        headers = {"Authorization": f"Bearer {login['access_token']}"}
+        body = {
+            "order_id": order_id,
+            "content": "商品损坏，需要退款",
+            "request_id": f"after-sales-{uuid4()}",
+        }
+        created = client.post("/api/chat/messages", headers=headers, json=body)
+        assert created.status_code == 202
+
+        with SessionLocal() as db:
+            ticket = db.get(Ticket, created.json()["ticket_id"])
+            assert ticket is not None
+            assert ticket.order_id == order_id
+            assert ticket.submitted_order_number.startswith("ORD-AFTER-SALES-")
+
+        duplicate = client.post(
+            "/api/chat/messages",
+            headers=headers,
+            json={**body, "request_id": f"after-sales-{uuid4()}"},
+        )
+        assert duplicate.status_code == 409
+        forbidden = client.post(
+            "/api/chat/messages",
+            headers=headers,
+            json={**body, "order_id": other_order.id, "request_id": f"after-sales-{uuid4()}"},
+        )
+        assert forbidden.status_code == 404
 
 
 def test_rejected_approval_resumes_graph_with_database_version(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -51,6 +51,7 @@ def create_order(
             db,
             customer=customer,
             product_name=payload.product_name,
+            amount=payload.amount,
             scenario=payload.scenario,
             request_id=payload.request_id,
             created_by=user,

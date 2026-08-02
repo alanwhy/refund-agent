@@ -4,7 +4,14 @@ from sqlalchemy import false, select
 from refund_agent.api.dependencies import CurrentUser, DbSession
 from refund_agent.api.schemas import OrderView
 from refund_agent.domain.enums import UserRole
-from refund_agent.models import ApprovalTask, ManualReviewTask, Order, Ticket, User
+from refund_agent.models import (
+    ApprovalTask,
+    ManualReviewTask,
+    Order,
+    RefundRequest,
+    Ticket,
+    User,
+)
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
@@ -44,6 +51,25 @@ def _related_ticket(db: DbSession, order: Order, user: CurrentUser) -> Ticket | 
     return db.scalar(statement.limit(1))
 
 
+def _lifecycle_status(db: DbSession, order: Order, ticket: Ticket | None) -> str:
+    if ticket is None:
+        return order.status
+    refund = db.scalar(select(RefundRequest).where(RefundRequest.ticket_id == ticket.id))
+    if refund is not None and refund.status == "SUCCEEDED":
+        return "REFUNDED"
+    if ticket.status == "MANUAL_REVIEW":
+        return "MANUAL_REVIEW"
+    if ticket.status == "WAITING_APPROVAL":
+        return "WAITING_APPROVAL"
+    if ticket.status in {"CREATED", "RUNNING", "WAITING_USER"}:
+        return "AFTER_SALES_PROCESSING"
+    if ticket.status == "REJECTED":
+        return "REFUND_REJECTED"
+    if ticket.status == "FAILED" or (refund is not None and refund.status == "FAILED"):
+        return "AFTER_SALES_FAILED"
+    return order.status
+
+
 def build_order_view(db: DbSession, order: Order, user: User) -> OrderView:
     ticket = _related_ticket(db, order, user)
     approval = (
@@ -64,6 +90,7 @@ def build_order_view(db: DbSession, order: Order, user: User) -> OrderView:
         product_name=order.product_name,
         amount=order.amount,
         status=order.status,
+        lifecycle_status=_lifecycle_status(db, order, ticket),
         delivered_at=order.delivered_at,
         customer_id=order.customer_id if user.role == UserRole.ADMIN else None,
         customer_name=customer.display_name if customer else None,

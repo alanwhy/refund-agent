@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -22,6 +23,12 @@ from refund_agent.models import (
 
 
 def _create_order(scenario: DemoOrderScenario, *, other_customer: bool = False) -> str:
+    amounts = {
+        DemoOrderScenario.AUTO_REFUND: Decimal("399.00"),
+        DemoOrderScenario.AMOUNT_APPROVAL: Decimal("699.00"),
+        DemoOrderScenario.RISK_APPROVAL: Decimal("699.00"),
+        DemoOrderScenario.PAYMENT_UNKNOWN: Decimal("299.00"),
+    }
     with SessionLocal() as db:
         email = "other@example.com" if other_customer else "customer@example.com"
         customer = db.scalar(select(User).where(User.email == email))
@@ -31,6 +38,7 @@ def _create_order(scenario: DemoOrderScenario, *, other_customer: bool = False) 
             db,
             customer=customer,
             product_name=f"全链路商品 {scenario}",
+            amount=amounts[scenario],
             scenario=scenario,
             request_id=f"e2e-{scenario}-{uuid4()}",
             created_by=admin,
@@ -98,6 +106,8 @@ def test_generated_approval_orders_pause_and_resume(
         assert ticket is not None and ticket.status == TicketStatus.WAITING_APPROVAL
         assert approval is not None
         assert any(reason_fragment in reason for reason in approval.risk_reasons)
+        if scenario == DemoOrderScenario.RISK_APPROVAL:
+            assert any("超过自动退款上限" in reason for reason in approval.risk_reasons)
         approval.status = ApprovalStatus.APPROVED
         approval.approved_amount = approval.suggested_amount
         approval.version += 1

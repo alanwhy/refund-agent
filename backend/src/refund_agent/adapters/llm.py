@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -11,6 +12,17 @@ from refund_agent.audit.service import append_audit
 from refund_agent.config import Settings, get_settings
 
 PROMPT_VERSION = "refund-agent-v2.0"
+
+
+def serialize_message(message: BaseMessage) -> dict[str, Any]:
+    try:
+        payload = message.model_dump(mode="json")
+    except Exception as exc:
+        return {
+            "type": getattr(message, "type", type(message).__name__),
+            "serialization_error": type(exc).__name__,
+        }
+    return dict(payload)
 
 
 def build_chat_model(settings: Settings | None = None) -> BaseChatModel:
@@ -43,6 +55,7 @@ def invoke_audited(
     run_id: str,
     node_name: str,
     logical_step: int,
+    tool_names: Sequence[str] = (),
 ) -> BaseMessage:
     settings = get_settings()
     event_prefix = f"{ticket_id}:refund-v2:{node_name}:{logical_step}"
@@ -51,7 +64,15 @@ def invoke_audited(
         action="model.requested",
         entity_type="model",
         ticket_id=ticket_id,
-        details={"model": settings.llm_model, "prompt_version": PROMPT_VERSION},
+        details={
+            "model": settings.llm_model,
+            "prompt_version": PROMPT_VERSION,
+            "logical_step": logical_step,
+            "input": {
+                "messages": [serialize_message(message) for message in messages],
+                "tools": list(tool_names),
+            },
+        },
         event_key=f"{event_prefix}:requested",
         run_id=run_id,
         node_name=node_name,
@@ -65,7 +86,13 @@ def invoke_audited(
             action="model.failed",
             entity_type="model",
             ticket_id=ticket_id,
-            details={"model": settings.llm_model, "error_type": type(exc).__name__},
+            details={
+                "model": settings.llm_model,
+                "prompt_version": PROMPT_VERSION,
+                "logical_step": logical_step,
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:500],
+            },
             event_key=f"{event_prefix}:failed",
             run_id=run_id,
             node_name=node_name,
@@ -80,6 +107,8 @@ def invoke_audited(
         details={
             "model": settings.llm_model,
             "prompt_version": PROMPT_VERSION,
+            "logical_step": logical_step,
+            "output": serialize_message(response),
             "duration_ms": round((monotonic() - started) * 1000),
             "usage": usage,
             "tool_count": len(getattr(response, "tool_calls", []) or []),

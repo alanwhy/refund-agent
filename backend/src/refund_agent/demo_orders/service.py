@@ -14,16 +14,15 @@ from refund_agent.models import DemoOrderCreation, Order, User
 
 @dataclass(frozen=True)
 class ScenarioSpec:
-    amount: Decimal
     fraud_flag: bool
     payment_behavior: str
 
 
 SCENARIO_SPECS: dict[DemoOrderScenario, ScenarioSpec] = {
-    DemoOrderScenario.AUTO_REFUND: ScenarioSpec(Decimal("399.00"), False, "success"),
-    DemoOrderScenario.AMOUNT_APPROVAL: ScenarioSpec(Decimal("699.00"), False, "success"),
-    DemoOrderScenario.RISK_APPROVAL: ScenarioSpec(Decimal("199.00"), True, "success"),
-    DemoOrderScenario.PAYMENT_UNKNOWN: ScenarioSpec(Decimal("299.00"), False, "unknown"),
+    DemoOrderScenario.AUTO_REFUND: ScenarioSpec(False, "success"),
+    DemoOrderScenario.AMOUNT_APPROVAL: ScenarioSpec(False, "success"),
+    DemoOrderScenario.RISK_APPROVAL: ScenarioSpec(True, "success"),
+    DemoOrderScenario.PAYMENT_UNKNOWN: ScenarioSpec(False, "unknown"),
 }
 
 
@@ -41,6 +40,7 @@ def create_demo_order(
     *,
     customer: User,
     product_name: str,
+    amount: Decimal,
     scenario: DemoOrderScenario,
     request_id: str,
     created_by: User,
@@ -73,7 +73,7 @@ def create_demo_order(
         order_number=order_number,
         customer_id=customer.id,
         product_name=product_name,
-        amount=spec.amount,
+        amount=amount,
         status="DELIVERED",
         delivered_at=datetime.now(UTC) - timedelta(days=2),
         product_tags=[],
@@ -95,7 +95,11 @@ def create_demo_order(
         entity_type="order",
         entity_id=order.id,
         actor_id=created_by.id,
-        details={"customer_id": customer.id, "scenario": scenario},
+        details={
+            "customer_id": customer.id,
+            "scenario": scenario,
+            "amount": f"{amount:.2f}",
+        },
         event_key=f"demo-order:{request_id}:created",
     )
     db.flush()

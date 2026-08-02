@@ -49,6 +49,7 @@ def test_admin_creates_demo_order_and_replay_is_idempotent(scenario: str) -> Non
         body = {
             "customer_id": customer_id,
             "product_name": f"接口测试商品 {scenario}",
+            "amount": "456.78",
             "scenario": scenario,
             "request_id": request_id,
         }
@@ -81,6 +82,7 @@ def test_demo_order_rejects_non_admin_invalid_customer_and_internal_fields() -> 
     valid = {
         "customer_id": customer_id,
         "product_name": "安全测试商品",
+        "amount": "399.00",
         "scenario": "AUTO_REFUND",
         "request_id": f"api-security-{uuid4()}",
     }
@@ -100,8 +102,14 @@ def test_demo_order_rejects_non_admin_invalid_customer_and_internal_fields() -> 
         assert client.post(
             "/api/demo/orders",
             headers=admin_headers,
-            json={**valid, "amount": "1.00"},
+            json={**valid, "fraud_flag": True},
         ).status_code == 422
+        for amount in ("0", "1000000", "1.001"):
+            assert client.post(
+                "/api/demo/orders",
+                headers=admin_headers,
+                json={**valid, "amount": amount, "request_id": f"invalid-{uuid4()}"},
+            ).status_code == 422
 
     with SessionLocal() as db:
         assert db.scalar(select(Order).where(Order.product_name == "安全测试商品")) is None

@@ -75,6 +75,25 @@ def send_message(
             {"kind": "user_input", "message": payload.content},
         )
     else:
+        selected_order = None
+        if payload.order_id:
+            selected_order = db.get(Order, payload.order_id)
+            if selected_order is None or selected_order.customer_id != user.id:
+                raise HTTPException(status_code=404, detail="Order not found")
+            existing_ticket = db.scalar(
+                select(Ticket)
+                .where(
+                    Ticket.customer_id == user.id,
+                    Ticket.order_id == selected_order.id,
+                )
+                .order_by(Ticket.created_at.desc())
+                .limit(1)
+            )
+            if existing_ticket is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Order already has an after-sales ticket",
+                )
         conversation = (
             db.get(Conversation, payload.conversation_id) if payload.conversation_id else None
         )
@@ -90,7 +109,12 @@ def send_message(
             content=payload.content,
             dedup_key=dedup_key,
         )
-        ticket = Ticket(customer_id=user.id, conversation_id=conversation.id)
+        ticket = Ticket(
+            customer_id=user.id,
+            conversation_id=conversation.id,
+            order_id=selected_order.id if selected_order else None,
+            submitted_order_number=selected_order.order_number if selected_order else None,
+        )
         db.add_all([message, ticket])
         db.flush()
         append_audit(

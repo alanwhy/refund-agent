@@ -24,6 +24,9 @@ from refund_agent.manual_review.service import CUSTOMER_MESSAGE, ensure_manual_r
 from refund_agent.models import Message, Order, RefundRequest, Ticket
 
 MAX_TOOL_CALLS_PER_STEP = 4
+MODEL_TOOL_NAMES = sorted(
+    READ_TOOL_NAMES | {RequestUserInput.__name__, SubmitRefundContext.__name__}
+)
 
 
 def _last_ai_message(state: RefundAgentState) -> AIMessage:
@@ -86,6 +89,7 @@ def reason_and_route_node(
                     run_id=state["run_id"],
                     node_name="reason_and_route",
                     logical_step=logical_step,
+                    tool_names=MODEL_TOOL_NAMES,
                 )
             except Exception:
                 db.commit()

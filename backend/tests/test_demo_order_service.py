@@ -27,17 +27,16 @@ def _users(db):  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.parametrize(
-    ("scenario", "amount", "fraud", "payment"),
+    ("scenario", "fraud", "payment"),
     [
-        (DemoOrderScenario.AUTO_REFUND, Decimal("399.00"), False, "success"),
-        (DemoOrderScenario.AMOUNT_APPROVAL, Decimal("699.00"), False, "success"),
-        (DemoOrderScenario.RISK_APPROVAL, Decimal("199.00"), True, "success"),
-        (DemoOrderScenario.PAYMENT_UNKNOWN, Decimal("299.00"), False, "unknown"),
+        (DemoOrderScenario.AUTO_REFUND, False, "success"),
+        (DemoOrderScenario.AMOUNT_APPROVAL, False, "success"),
+        (DemoOrderScenario.RISK_APPROVAL, True, "success"),
+        (DemoOrderScenario.PAYMENT_UNKNOWN, False, "unknown"),
     ],
 )
 def test_demo_order_scenarios_are_deterministic(
     scenario: DemoOrderScenario,
-    amount: Decimal,
     fraud: bool,
     payment: str,
 ) -> None:
@@ -47,6 +46,7 @@ def test_demo_order_scenarios_are_deterministic(
             db,
             customer=customer,
             product_name=f"场景商品 {scenario}",
+            amount=Decimal("321.45"),
             scenario=scenario,
             request_id=f"service-{scenario}-{uuid4()}",
             created_by=admin,
@@ -54,7 +54,7 @@ def test_demo_order_scenarios_are_deterministic(
         db.commit()
         assert replayed is False
         assert order.order_number.startswith("ORD-DEMO-")
-        assert order.amount == amount
+        assert order.amount == Decimal("321.45")
         assert order.fraud_flag is fraud
         assert order.payment_behavior == payment
         assert order.status == "DELIVERED"
@@ -72,6 +72,7 @@ def test_demo_order_creation_is_idempotent_and_has_no_refund_side_effects() -> N
             db,
             customer=customer,
             product_name="首次商品",
+            amount=Decimal("123.45"),
             scenario=DemoOrderScenario.AUTO_REFUND,
             request_id=request_id,
             created_by=admin,
@@ -85,6 +86,7 @@ def test_demo_order_creation_is_idempotent_and_has_no_refund_side_effects() -> N
             db,
             customer=customer,
             product_name="不应覆盖的商品",
+            amount=Decimal("999.99"),
             scenario=DemoOrderScenario.PAYMENT_UNKNOWN,
             request_id=request_id,
             created_by=admin,
@@ -94,6 +96,7 @@ def test_demo_order_creation_is_idempotent_and_has_no_refund_side_effects() -> N
         assert second_replayed is True
         assert second.id == first_id
         assert second.product_name == "首次商品"
+        assert second.amount == Decimal("123.45")
         assert db.scalar(
             select(func.count(DemoOrderCreation.id)).where(
                 DemoOrderCreation.request_id == request_id
@@ -124,6 +127,7 @@ def test_demo_order_number_retries_and_exhausts(monkeypatch: pytest.MonkeyPatch)
                 db,
                 customer=customer,
                 product_name="冲突商品",
+                amount=Decimal("399.00"),
                 scenario=DemoOrderScenario.AUTO_REFUND,
                 request_id="service-number-conflict",
                 created_by=admin,

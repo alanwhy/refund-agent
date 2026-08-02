@@ -115,7 +115,31 @@ LangGraph 在节点返回后写 checkpoint，所以 Worker 可能在业务事务
 前端在 `RUNNING` 时约 1.8 秒刷新，在 `WAITING_APPROVAL` 时约 10 秒刷新，在 `WAITING_USER` 和
 终态停止。用户回答补问会恢复同一 ticket，而不是创建新工单。
 
-## 9. 本地排障
+## 9. 管理员测试订单工厂
+
+测试订单工厂用于补齐本地演示的业务起点。管理员在“全部订单”选择现有客户、商品名称和受控
+场景，服务端根据场景写入固定金额与底层 Mock 行为：
+
+| 场景 | 服务端订单事实 | 后续退款路径 |
+| --- | --- | --- |
+| `AUTO_REFUND` | ¥399、正常支付 | 自动完成 |
+| `AMOUNT_APPROVAL` | ¥699、正常支付 | 金额规则要求审批 |
+| `RISK_APPROVAL` | ¥199、风险标记、正常支付 | 风控规则要求审批 |
+| `PAYMENT_UNKNOWN` | ¥299、支付结果未知 | 创建技术异常，支付不自动重试 |
+
+金额、风险标记、支付行为和签收时间均由服务端场景映射决定，前端不能提交或覆盖这些字段。
+接口仅允许活动管理员调用；客户候选也必须是数据库中的活动客户账号。
+
+创建操作的事务边界只包含 `Order`、`DemoOrderCreation` 和 `demo_order.created` 审计事件。它不
+创建 `Ticket`、`ApprovalTask`、`ManualReviewTask` 或 `RefundRequest`。客户之后在售后对话提交
+消息，才会新建工单并运行 LangGraph。
+
+`DemoOrderCreation.request_id` 是全局唯一幂等键。同一 request ID 重放时返回第一次创建的订单
+和 HTTP 200；首次创建返回 HTTP 201。订单号采用 `ORD-DEMO-YYYYMMDD-XXXXXX`，生成冲突时最多
+重试三次。测试订单与固定 seed 一样保存在 PostgreSQL 卷中，只有 `docker compose down -v`
+会清除。
+
+## 10. 本地排障
 
 查看服务状态：
 

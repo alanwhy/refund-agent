@@ -33,6 +33,8 @@ flowchart TD
     APPROVAL -->|拒绝| RESPOND
     EXECUTE --> RESPOND
     RESPOND --> END
+    AGENT -->|模型或安全异常| MANUAL["ManualReviewTask"]
+    EXECUTE -->|支付结果未知| MANUAL
 ```
 
 Agent 最多执行 `AGENT_MAX_STEPS` 轮。未知工具、混合控制调用、非法参数、过量工具调用或步骤
@@ -63,6 +65,11 @@ Graph 时显式注入的 `ScriptedModel`。
 API 要求携带同一 `ticket_id`，写入带 request ID 的用户消息，并投递 `resume`。Worker 使用相同
 `thread_id` 调用 `Command(resume={kind: "user_input", message: ...})`。
 
+恢复时不能只追加一条 `HumanMessage`。上一条 AI 消息包含 `RequestUserInput` 工具调用，兼容
+OpenAI tool calling 的消息序列必须先追加具有相同 `tool_call_id` 的 `ToolMessage`，再追加客户
+回答。否则第二轮网关会因“tool call 没有对应结果”返回 HTTP 400。内部 ToolMessage 只存在于
+checkpoint，不写入客户可见的 Message 表。
+
 ### 人工审批
 
 `approval_interrupt` 在暂停前幂等创建唯一审批任务。审批接口用乐观锁版本写入决定，再投递带
@@ -81,7 +88,26 @@ LangGraph 在节点返回后写 checkpoint，所以 Worker 可能在业务事务
 - 支付适配器也收到同一个幂等键；
 - `UNKNOWN` 支付结果直接转人工，绝不自动重试支付。
 
-## 6. HTTP 202 与前端轮询
+## 6. 审批与技术异常
+
+`ApprovalTask` 只代表业务规则要求人工决定是否退款；审批通过后 Graph 才可能进入支付节点。
+`ManualReviewTask` 代表系统无法安全自动完成，类别固定为模型失败、支付未知、数据不一致或安全
+校验拦截。异常任务支持认领、内部备注、解决和无法解决，但它的服务和接口不依赖审批服务，也
+不具备退款执行入口。
+
+同一个工单最多一个异常任务。迁移会把历史 `MANUAL_REVIEW` 工单补入异常队列，支付状态为
+`UNKNOWN` 的归入支付未知，其余按受控审计原因分类。
+
+## 7. 订单可见范围
+
+- 客户：仅订单 `customer_id` 为当前用户的订单；
+- 审批员：仅存在未分配或分配给自己的 `ApprovalTask` 的关联订单；
+- 管理员：全部订单，并显示关联工单、审批与异常摘要。
+
+列表与详情共用相同的数据库权限条件，猜测订单 ID 不能绕过范围限制。技术异常订单从异常详情
+进入，不会因为异常任务自动出现在审批员的审批订单列表。
+
+## 8. HTTP 202 与前端轮询
 
 消息接口在业务记录成功落库、后台任务成功进入投递路径后返回 `202 Accepted`，并用 `Location`
 指向工单状态 URL。202 表示“已接受、尚未完成”，是异步 HTTP API 的标准语义，不代表退款成功。
@@ -89,7 +115,7 @@ LangGraph 在节点返回后写 checkpoint，所以 Worker 可能在业务事务
 前端在 `RUNNING` 时约 1.8 秒刷新，在 `WAITING_APPROVAL` 时约 10 秒刷新，在 `WAITING_USER` 和
 终态停止。用户回答补问会恢复同一 ticket，而不是创建新工单。
 
-## 7. 本地排障
+## 9. 本地排障
 
 查看服务状态：
 
@@ -109,6 +135,8 @@ docker compose logs -f api worker migrate
 - Worker 无响应：检查 Redis、Worker 日志和是否存在同 ticket 锁；
 - checkpoint 无法恢复：确认 PostgreSQL 未换卷、`thread_id` 仍为原 ticket ID；
 - 模型不返回工具调用：运行 `make smoke-model` 验证网关是否支持标准 tool calling；
+- 第二轮模型返回 HTTP 400：检查 checkpoint 中是否为 AI tool call、匹配的 ToolMessage、客户
+  HumanMessage 的顺序；
 - 修改迁移后表不一致：先运行 `docker compose run --rm migrate`，不要让 API 隐式建表。
 
 仅在确认不需要保留任何本地数据时重置：

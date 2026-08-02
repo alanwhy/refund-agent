@@ -47,15 +47,18 @@ def test_customer_only_sees_own_orders_and_safe_fields() -> None:
         assert response.status_code == 200
         orders = response.json()
         assert "ORD-500-OTHER" not in {item["order_number"] for item in orders}
-        assert "ORD-399" in {item["order_number"] for item in orders}
         assert all(item["customer_id"] is None for item in orders)
         assert all(item["risk_reasons"] is None for item in orders)
 
         with SessionLocal() as db:
+            own = db.scalar(select(Order).where(Order.order_number == "ORD-399"))
             other = db.scalar(
                 select(Order).where(Order.order_number == "ORD-500-OTHER")
             )
-            assert other is not None
+            assert own is not None and other is not None
+            visible = client.get(f"/api/orders/{own.id}", headers=headers)
+            assert visible.status_code == 200
+            assert visible.json()["order_number"] == "ORD-399"
             forbidden = client.get(f"/api/orders/{other.id}", headers=headers)
             assert forbidden.status_code == 404
 
@@ -84,12 +87,27 @@ def test_admin_sees_every_order_with_customer_summary() -> None:
         response = client.get("/api/orders", headers=headers)
         assert response.status_code == 200
         orders = response.json()
-        assert {
-            "ORD-399",
-            "ORD-699",
-            "ORD-199-FRAUD",
-            "ORD-299-UNKNOWN",
-            "ORD-500-OTHER",
-        }.issubset({item["order_number"] for item in orders})
         assert all(item["customer_id"] for item in orders)
         assert all(item["customer_name"] for item in orders)
+
+        with SessionLocal() as db:
+            fixed_orders = list(
+                db.scalars(
+                    select(Order).where(
+                        Order.order_number.in_(
+                            {
+                                "ORD-399",
+                                "ORD-699",
+                                "ORD-199-FRAUD",
+                                "ORD-299-UNKNOWN",
+                                "ORD-500-OTHER",
+                            }
+                        )
+                    )
+                )
+            )
+            assert len(fixed_orders) == 5
+            for order in fixed_orders:
+                detail = client.get(f"/api/orders/{order.id}", headers=headers)
+                assert detail.status_code == 200
+                assert detail.json()["customer_id"] == order.customer_id

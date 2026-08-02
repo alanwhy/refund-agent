@@ -2,7 +2,9 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from refund_agent.domain.enums import DemoOrderScenario
 
 
 class LoginRequest(BaseModel):
@@ -156,6 +158,7 @@ class OrderView(BaseModel):
     delivered_at: datetime
     customer_id: str | None = None
     customer_name: str | None = None
+    customer_email: str | None = None
     ticket_id: str | None = None
     ticket_status: str | None = None
     approval_id: str | None = None
@@ -164,3 +167,31 @@ class OrderView(BaseModel):
     risk_reasons: list[str] | None = None
     manual_review_id: str | None = None
     manual_review_category: str | None = None
+
+
+class DemoCustomerView(BaseModel):
+    id: str
+    display_name: str
+    email: EmailStr
+
+
+class DemoOrderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    customer_id: str
+    product_name: str = Field(min_length=2, max_length=100)
+    scenario: DemoOrderScenario
+    request_id: str = Field(min_length=8, max_length=100)
+
+    @field_validator("product_name")
+    @classmethod
+    def normalize_product_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("product_name must contain at least 2 characters")
+        return normalized
+
+
+class DemoOrderCreateResponse(BaseModel):
+    order: OrderView
+    replayed: bool

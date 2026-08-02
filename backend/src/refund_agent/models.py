@@ -46,6 +46,19 @@ class Order(Base):
     payment_behavior: Mapped[str] = mapped_column(String(32), default="success")
 
 
+class DemoOrderCreation(Base):
+    __tablename__ = "demo_order_creations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    request_id: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), unique=True, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    scenario: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 

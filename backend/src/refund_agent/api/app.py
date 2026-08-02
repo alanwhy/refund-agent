@@ -10,6 +10,7 @@ from refund_agent.api.routes import (
     approvals,
     audit,
     auth,
+    demo,
     health,
     manual_reviews,
     orders,
@@ -58,5 +59,6 @@ app.include_router(auth.router)
 app.include_router(tickets.router)
 app.include_router(approvals.router)
 app.include_router(orders.router)
+app.include_router(demo.router)
 app.include_router(manual_reviews.router)
 app.include_router(audit.router)

@@ -44,7 +44,7 @@ def _related_ticket(db: DbSession, order: Order, user: CurrentUser) -> Ticket | 
     return db.scalar(statement.limit(1))
 
 
-def _view(db: DbSession, order: Order, user: CurrentUser) -> OrderView:
+def build_order_view(db: DbSession, order: Order, user: User) -> OrderView:
     ticket = _related_ticket(db, order, user)
     approval = (
         db.scalar(select(ApprovalTask).where(ApprovalTask.ticket_id == ticket.id))
@@ -67,6 +67,7 @@ def _view(db: DbSession, order: Order, user: CurrentUser) -> OrderView:
         delivered_at=order.delivered_at,
         customer_id=order.customer_id if user.role == UserRole.ADMIN else None,
         customer_name=customer.display_name if customer else None,
+        customer_email=customer.email if customer else None,
         ticket_id=ticket.id if ticket else None,
         ticket_status=ticket.status if ticket else None,
         approval_id=approval.id if approval else None,
@@ -89,7 +90,7 @@ def list_orders(
     if status:
         statement = statement.where(Order.status == status)
     statement = statement.order_by(Order.delivered_at.desc()).limit(limit)
-    return [_view(db, order, user) for order in db.scalars(statement)]
+    return [build_order_view(db, order, user) for order in db.scalars(statement)]
 
 
 @router.get("/{order_id}", response_model=OrderView)
@@ -97,4 +98,4 @@ def order_detail(order_id: str, db: DbSession, user: CurrentUser) -> OrderView:
     order = db.scalar(_scoped_orders(user).where(Order.id == order_id))
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
-    return _view(db, order, user)
+    return build_order_view(db, order, user)

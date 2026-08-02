@@ -5,6 +5,8 @@ import { ApprovalDashboardPage } from "./pages/ApprovalDashboardPage";
 import { AuditPage } from "./pages/AuditPage";
 import { CustomerChatPage } from "./pages/CustomerChatPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ManualReviewPage } from "./pages/ManualReviewPage";
+import { OrdersPage } from "./pages/OrdersPage";
 import type { Role } from "./types";
 
 function Protected({ roles }: { roles: Role[] }) {
@@ -33,8 +35,12 @@ export default function App() {
       <Route element={<Protected roles={["CUSTOMER"]} />}>
         <Route path="/chat" element={<CustomerChatPage />} />
       </Route>
+      <Route element={<Protected roles={["CUSTOMER", "APPROVER", "ADMIN"]} />}>
+        <Route path="/orders" element={<OrdersPage />} />
+      </Route>
       <Route element={<Protected roles={["APPROVER", "ADMIN"]} />}>
         <Route path="/approvals" element={<ApprovalDashboardPage />} />
+        <Route path="/manual-reviews" element={<ManualReviewPage />} />
       </Route>
       <Route element={<Protected roles={["ADMIN"]} />}>
         <Route path="/audit" element={<AuditPage />} />

@@ -57,6 +57,8 @@ describe("CustomerChatPage", () => {
     render(<CustomerChatPage />);
 
     expect(await screen.findByRole("status")).toHaveTextContent("请提供订单号和退款原因。");
+    const panel = document.querySelector(".conversation-panel");
+    expect(panel?.lastElementChild).toHaveClass("composer");
     const input = screen.getByLabelText("补充信息");
     await user.clear(input);
     await user.type(input, "ORD-399，商品不合适");

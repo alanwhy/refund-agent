@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, api } from "../api";
 import { useAuth } from "../auth";
 import { StatusPill } from "../components/StatusPill";
@@ -53,6 +53,7 @@ export function CustomerChatPage() {
   const [message, setMessage] = useState("我想退货，订单号 ORD-399");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const messagesRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(
     async (preferredId?: string) => {
@@ -88,6 +89,17 @@ export function CustomerChatPage() {
     }, delay);
     return () => window.clearTimeout(timer);
   }, [active, refresh]);
+
+  useEffect(() => {
+    const element = messagesRef.current;
+    if (!element) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    if (typeof element.scrollTo !== "function") return;
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, [active?.messages?.length, active?.status]);
 
   const canSend =
     !active || terminalStates.has(active.status) || active.status === "WAITING_USER";
@@ -165,7 +177,7 @@ export function CustomerChatPage() {
           {active && <StatusPill status={active.status} />}
         </div>
 
-        <div className="messages" aria-live="polite">
+        <div className="messages" aria-live="polite" ref={messagesRef}>
           {!active && (
             <div className="welcome-note">
               <span className="brand-mark">归</span>
@@ -217,8 +229,8 @@ export function CustomerChatPage() {
           )}
         </div>
 
-        {error && <p className="error-banner">{error}</p>}
         <div className={waitingForUser ? "composer composer--waiting" : "composer"}>
+          {error && <p className="error-banner">{error}</p>}
           <label htmlFor="refund-message">{composerLabel}</label>
           <div>
             <textarea

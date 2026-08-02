@@ -25,9 +25,15 @@ export function AppShell({ children }: PropsWithChildren) {
           </span>
         </NavLink>
         <nav className="main-nav" aria-label="主导航">
-          {user.role === "CUSTOMER" && <NavLink to="/chat">申请退款</NavLink>}
+          {user.role === "CUSTOMER" && <NavLink to="/chat">售后对话</NavLink>}
+          {user.role === "CUSTOMER" && <NavLink to="/orders">我的订单</NavLink>}
           {(user.role === "APPROVER" || user.role === "ADMIN") && (
-            <NavLink to="/approvals">审批工作台</NavLink>
+            <NavLink to="/approvals">退款审批</NavLink>
+          )}
+          {user.role === "APPROVER" && <NavLink to="/orders">审批订单</NavLink>}
+          {user.role === "ADMIN" && <NavLink to="/orders">全部订单</NavLink>}
+          {(user.role === "APPROVER" || user.role === "ADMIN") && (
+            <NavLink to="/manual-reviews">异常处理</NavLink>
           )}
           {user.role === "ADMIN" && <NavLink to="/audit">审计记录</NavLink>}
         </nav>

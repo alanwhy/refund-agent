@@ -9,14 +9,17 @@ const labels: Record<string, string> = {
   FAILED: "处理失败",
   PENDING: "待审批",
   APPROVED: "已批准",
-  ESCALATED: "已升级"
+  ESCALATED: "已升级",
+  RESOLVED: "已解决",
+  UNRESOLVABLE: "无法解决",
+  DELIVERED: "已签收"
 };
 
-export function StatusPill({ status }: { status: string }) {
+export function StatusPill({ status, label }: { status: string; label?: string }) {
   return (
     <span className={"status status--" + status.toLowerCase()}>
       <i aria-hidden="true" />
-      {labels[status] ?? status}
+      {label ?? labels[status] ?? status}
     </span>
   );
 }

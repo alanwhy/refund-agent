@@ -2,9 +2,10 @@ import os
 
 import pytest
 
-os.environ["LLM_BASE_URL"] = "http://model.invalid/v1"
-os.environ["LLM_API_KEY"] = "test-only-key"
-os.environ["LLM_MODEL"] = "scripted-test-model"
+if os.getenv("RUN_REAL_MODEL_SMOKE") != "1":
+    os.environ["LLM_BASE_URL"] = "http://model.invalid/v1"
+    os.environ["LLM_API_KEY"] = "test-only-key"
+    os.environ["LLM_MODEL"] = "scripted-test-model"
 os.environ["SERVICE_ROLE"] = "test"
 
 from refund_agent.infrastructure.database import SessionLocal, create_schema

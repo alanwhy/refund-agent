@@ -171,7 +171,10 @@ def resolve_manual_review(
         )
         .values(
             status=new_status,
-            assigned_to=task.assigned_to or user.id,
+            assigned_to=(
+                task.assigned_to
+                or (user.id if user.role == UserRole.APPROVER else None)
+            ),
             resolution_note=payload.resolution_note.strip(),
             resolved_by=user.id,
             resolved_at=now,

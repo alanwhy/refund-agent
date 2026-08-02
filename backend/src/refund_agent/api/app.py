@@ -6,7 +6,15 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from refund_agent.api.routes import approvals, audit, auth, health, tickets
+from refund_agent.api.routes import (
+    approvals,
+    audit,
+    auth,
+    health,
+    manual_reviews,
+    orders,
+    tickets,
+)
 from refund_agent.config import get_settings
 
 
@@ -49,4 +57,6 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(tickets.router)
 app.include_router(approvals.router)
+app.include_router(orders.router)
+app.include_router(manual_reviews.router)
 app.include_router(audit.router)

@@ -112,3 +112,55 @@ class AuditView(BaseModel):
     details: dict[str, object]
     trace_id: str
     created_at: datetime
+
+
+class ManualReviewView(BaseModel):
+    id: str
+    ticket_id: str
+    status: str
+    category: str
+    version: int
+    submitted_order_number: str | None
+    technical_summary: str
+    assigned_to: str | None
+    assigned_name: str | None
+    resolution_note: str | None
+    resolved_by: str | None
+    customer_name: str
+    order_id: str | None
+    order_number: str | None
+    product_name: str | None
+    ticket_status: str
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: datetime | None
+
+
+class ManualReviewAssignRequest(BaseModel):
+    version: int = Field(ge=1)
+    assignee_id: str | None = None
+
+
+class ManualReviewResolutionRequest(BaseModel):
+    version: int = Field(ge=1)
+    status: str
+    resolution_note: str = Field(min_length=1, max_length=2000)
+
+
+class OrderView(BaseModel):
+    id: str
+    order_number: str
+    product_name: str
+    amount: Decimal
+    status: str
+    delivered_at: datetime
+    customer_id: str | None = None
+    customer_name: str | None = None
+    ticket_id: str | None = None
+    ticket_status: str | None = None
+    approval_id: str | None = None
+    approval_status: str | None = None
+    approval_assigned_to: str | None = None
+    risk_reasons: list[str] | None = None
+    manual_review_id: str | None = None
+    manual_review_category: str | None = None

@@ -96,6 +96,7 @@ export interface OrderView {
   delivered_at: string;
   customer_id: string | null;
   customer_name: string | null;
+  customer_email: string | null;
   ticket_id: string | null;
   ticket_status: string | null;
   approval_id: string | null;
@@ -104,6 +105,23 @@ export interface OrderView {
   risk_reasons: string[] | null;
   manual_review_id: string | null;
   manual_review_category: string | null;
+}
+
+export type DemoOrderScenario =
+  | "AUTO_REFUND"
+  | "AMOUNT_APPROVAL"
+  | "RISK_APPROVAL"
+  | "PAYMENT_UNKNOWN";
+
+export interface DemoCustomer {
+  id: string;
+  display_name: string;
+  email: string;
+}
+
+export interface DemoOrderCreateResponse {
+  order: OrderView;
+  replayed: boolean;
 }
 
 export interface ManualReviewTask {

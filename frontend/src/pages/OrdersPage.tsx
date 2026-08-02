@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { DemoOrderForm } from "../components/DemoOrderForm";
 import { StatusPill } from "../components/StatusPill";
-import type { OrderView } from "../types";
+import type { DemoCustomer, DemoOrderCreateResponse, OrderView } from "../types";
 
 const titles = {
   CUSTOMER: ["我的订单", "查看自己的订单与售后处理进度。"],
@@ -15,18 +16,59 @@ export function OrdersPage() {
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [customers, setCustomers] = useState<DemoCustomer[]>([]);
+  const [customerError, setCustomerError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [highlightedOrderId, setHighlightedOrderId] = useState<string | null>(null);
+
+  const loadOrders = useCallback(async () => {
+    if (!token) return;
+    const result = await api<OrderView[]>("/orders", {}, token);
+    setOrders(result);
+  }, [token]);
 
   useEffect(() => {
-    if (!token) return;
     setLoading(true);
-    api<OrderView[]>("/orders", {}, token)
-      .then(setOrders)
+    void loadOrders()
       .catch((reason) => setError(reason instanceof Error ? reason.message : "订单加载失败"))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, [loadOrders]);
+
+  useEffect(() => {
+    if (!highlightedOrderId) return;
+    const timer = window.setTimeout(() => setHighlightedOrderId(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [highlightedOrderId]);
 
   if (!user) return null;
   const [title, description] = titles[user.role];
+
+  async function openDemoOrderForm() {
+    setSuccess("");
+    setHighlightedOrderId(null);
+    setCustomerError("");
+    if (customers.length === 0 && token) {
+      try {
+        setCustomers(await api<DemoCustomer[]>("/demo/customers", {}, token));
+      } catch (reason) {
+        setCustomerError(reason instanceof Error ? reason.message : "客户列表加载失败");
+      }
+    }
+    setFormOpen(true);
+  }
+
+  function handleCreated(result: DemoOrderCreateResponse) {
+    setFormOpen(false);
+    setHighlightedOrderId(result.order.id);
+    setOrders((current) => [result.order, ...current.filter((item) => item.id !== result.order.id)]);
+    setSuccess(
+      `测试订单 ${result.order.order_number} 已创建，请使用 ${result.order.customer_email} 发起退款。`,
+    );
+    void loadOrders().catch(() => {
+      setError("订单已创建，但列表刷新失败。请点击刷新订单列表。");
+    });
+  }
 
   return (
     <div className="record-page orders-page">
@@ -36,9 +78,26 @@ export function OrdersPage() {
           <h1>{title}</h1>
           <p className="muted">{description}</p>
         </div>
-        <span className="record-count">{orders.length} 笔</span>
+        <div className="record-page__actions">
+          <span className="record-count">{orders.length} 笔</span>
+          {user.role === "ADMIN" && (
+            <button className="primary-button" onClick={() => void openDemoOrderForm()}>
+              新建测试订单
+            </button>
+          )}
+        </div>
       </header>
+      {success && <p className="success-banner" role="status">{success}</p>}
       {error && <p className="error-banner">{error}</p>}
+      {customerError && <p className="error-banner">{customerError}</p>}
+      {formOpen && token && customers.length > 0 && (
+        <DemoOrderForm
+          customers={customers}
+          token={token}
+          onCancel={() => setFormOpen(false)}
+          onCreated={handleCreated}
+        />
+      )}
       {loading ? (
         <div className="empty-state"><strong>正在读取订单…</strong></div>
       ) : orders.length === 0 ? (
@@ -50,7 +109,12 @@ export function OrdersPage() {
       ) : (
         <div className="order-ledger">
           {orders.map((order) => (
-            <article className="order-entry" key={order.id}>
+            <article
+              className={
+                highlightedOrderId === order.id ? "order-entry order-entry--new" : "order-entry"
+              }
+              key={order.id}
+            >
               <div className="order-entry__number">
                 <small>订单号</small>
                 <strong>{order.order_number}</strong>
@@ -58,7 +122,9 @@ export function OrdersPage() {
               <div className="order-entry__product">
                 <strong>{order.product_name}</strong>
                 <span>{new Date(order.delivered_at).toLocaleDateString("zh-CN")} 签收</span>
-                {user.role === "ADMIN" && <span>客户 · {order.customer_name}</span>}
+                {user.role === "ADMIN" && (
+                  <span>客户 · {order.customer_name} · {order.customer_email}</span>
+                )}
               </div>
               <div className="order-entry__amount">
                 <small>实付金额</small>

@@ -33,6 +33,7 @@ export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [selected, setSelected] = useState(accounts[0]);
+  const [customerEmail, setCustomerEmail] = useState("customer@example.com");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,7 +41,8 @@ export function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const user = await login(selected.email, "Demo123!");
+      const email = selected.role === "CUSTOMER" ? customerEmail.trim() : selected.email;
+      const user = await login(email, "Demo123!");
       navigate(user.role === "CUSTOMER" ? "/chat" : "/approvals");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "登录未完成");
@@ -48,6 +50,8 @@ export function LoginPage() {
       setLoading(false);
     }
   }
+
+  const customerEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEmail.trim());
 
   return (
     <main className="login-page">
@@ -102,8 +106,26 @@ export function LoginPage() {
             </button>
           ))}
         </div>
+        {selected.role === "CUSTOMER" && (
+          <label className="customer-email-field" htmlFor="customer-email">
+            客户邮箱
+            <input
+              id="customer-email"
+              type="email"
+              value={customerEmail}
+              onChange={(event) => setCustomerEmail(event.target.value)}
+              autoComplete="username"
+              aria-invalid={!customerEmailValid}
+            />
+            <small>创建测试订单后，在这里填写订单所属客户的邮箱。</small>
+          </label>
+        )}
         {error && <p className="error-banner">{error}</p>}
-        <button className="primary-button full-width" onClick={signIn} disabled={loading}>
+        <button
+          className="primary-button full-width"
+          onClick={signIn}
+          disabled={loading || (selected.role === "CUSTOMER" && !customerEmailValid)}
+        >
           {loading ? "正在进入…" : "进入" + selected.title}
         </button>
         <p className="demo-credential">演示密码：Demo123!</p>

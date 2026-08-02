@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { ApiError, api } from "../api";
 import { useAuth } from "../auth";
 import { StatusPill } from "../components/StatusPill";
@@ -47,20 +48,38 @@ function stepIndex(ticket: Ticket | null): number {
 
 export function CustomerChatPage() {
   const { token } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedTicketId = searchParams.get("ticket_id") ?? undefined;
+  const requestedOrderId = searchParams.get("order_id") ?? undefined;
+  const requestedOrderNumber = searchParams.get("order_number") ?? undefined;
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [active, setActive] = useState<Ticket | null>(null);
   const [selectedTicketId, setSelectedTicketId] = useState<string | undefined>();
-  const [message, setMessage] = useState("我想退货，订单号 ORD-399");
+  const [message, setMessage] = useState(() =>
+    requestedOrderNumber
+      ? `我想退款，订单号 ${requestedOrderNumber}，原因是`
+      : "我想退货，订单号 ORD-399",
+  );
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const messagesRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (requestedOrderNumber) {
+      setMessage(`我想退款，订单号 ${requestedOrderNumber}，原因是`);
+    }
+  }, [requestedOrderNumber]);
 
   const refresh = useCallback(
     async (preferredId?: string) => {
       if (!token) return;
       const list = await api<Ticket[]>("/tickets", {}, token);
       setTickets(list);
-      const targetId = preferredId ?? selectedTicketId ?? list[0]?.id;
+      const targetId =
+        preferredId ??
+        requestedTicketId ??
+        selectedTicketId ??
+        (requestedOrderId ? undefined : list[0]?.id);
       if (!targetId) {
         setActive(null);
         return;
@@ -69,7 +88,7 @@ export function CustomerChatPage() {
       setSelectedTicketId(targetId);
       setActive(detail);
     },
-    [token, selectedTicketId],
+    [token, selectedTicketId, requestedOrderId, requestedTicketId],
   );
 
   useEffect(() => {
@@ -113,16 +132,20 @@ export function CustomerChatPage() {
         "/chat/messages",
         {
           method: "POST",
-          body: JSON.stringify(buildChatPayload(message.trim(), active)),
+          body: JSON.stringify(buildChatPayload(message.trim(), active, requestedOrderId)),
         },
         token,
       );
       setMessage("");
       await refresh(accepted.ticket_id);
     } catch (reason) {
-      if (reason instanceof ApiError && reason.status === 409 && active) {
-        setError("工单状态已更新，正在为你刷新。请查看最新提示后再继续。 ");
-        await refresh(active.id);
+      if (reason instanceof ApiError && reason.status === 409) {
+        if (requestedOrderId && !active) {
+          setError("该订单已经有售后工单，请返回“我的订单”点击“查看售后”。");
+        } else if (active) {
+          setError("工单状态已更新，正在为你刷新。请查看最新提示后再继续。 ");
+          await refresh(active.id);
+        }
       } else {
         setError(reason instanceof Error ? reason.message : "申请未发送");
       }

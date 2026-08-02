@@ -83,6 +83,8 @@ export interface AuditEvent {
   entity_type: string;
   entity_id: string | null;
   details: Record<string, unknown>;
+  run_id: string | null;
+  node_name: string | null;
   trace_id: string;
   created_at: string;
 }
@@ -93,6 +95,7 @@ export interface OrderView {
   product_name: string;
   amount: string;
   status: string;
+  lifecycle_status: string;
   delivered_at: string;
   customer_id: string | null;
   customer_name: string | null;

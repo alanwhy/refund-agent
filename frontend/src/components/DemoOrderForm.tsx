@@ -14,27 +14,21 @@ const scenarios: Array<{
 }> = [
   {
     value: "AUTO_REFUND",
-    title: "自动退款",
-    amount: "¥399",
-    description: "规则核验通过后直接完成退款。",
-  },
-  {
-    value: "AMOUNT_APPROVAL",
-    title: "金额审批",
-    amount: "¥699",
-    description: "金额超过 ¥500，进入退款审批。",
+    title: "正常订单",
+    amount: "按金额判断",
+    description: "不超过 ¥500 自动退款，超过后进入金额审批。",
   },
   {
     value: "RISK_APPROVAL",
-    title: "风控审批",
-    amount: "¥199",
-    description: "命中风险信号，进入退款审批。",
+    title: "风控订单",
+    amount: "叠加金额规则",
+    description: "命中风险信号；金额超过 ¥500 时保留两条原因。",
   },
   {
     value: "PAYMENT_UNKNOWN",
-    title: "支付异常",
-    amount: "¥299",
-    description: "支付结果未知，进入技术异常处理。",
+    title: "支付异常订单",
+    amount: "执行结果未知",
+    description: "通过前置规则后，支付结果未知并进入异常处理。",
   },
 ];
 
@@ -48,13 +42,17 @@ interface Props {
 export function DemoOrderForm({ customers, token, onCancel, onCreated }: Props) {
   const [customerId, setCustomerId] = useState(customers[0]?.id ?? "");
   const [productName, setProductName] = useState("");
+  const [amount, setAmount] = useState("399.00");
   const [scenario, setScenario] = useState<DemoOrderScenario>("AUTO_REFUND");
   const [requestId] = useState(() => crypto.randomUUID());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const amountValue = Number(amount);
+  const amountValid =
+    /^\d+(\.\d{1,2})?$/.test(amount) && amountValue >= 0.01 && amountValue <= 999999.99;
 
   async function createOrder() {
-    if (!customerId || productName.trim().length < 2 || busy) return;
+    if (!customerId || productName.trim().length < 2 || !amountValid || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -65,6 +63,7 @@ export function DemoOrderForm({ customers, token, onCancel, onCreated }: Props) 
           body: JSON.stringify({
             customer_id: customerId,
             product_name: productName.trim(),
+            amount,
             scenario,
             request_id: requestId,
           }),
@@ -112,10 +111,28 @@ export function DemoOrderForm({ customers, token, onCancel, onCreated }: Props) 
             maxLength={100}
           />
         </label>
+        <label htmlFor="demo-amount">
+          订单金额
+          <span className="money-input">
+            <span>¥</span>
+            <input
+              id="demo-amount"
+              type="number"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              min="0.01"
+              max="999999.99"
+              step="0.01"
+              aria-invalid={!amountValid}
+            />
+          </span>
+          {!amountValid && <small className="field-error">请输入 0.01–999999.99，最多两位小数</small>}
+        </label>
       </div>
 
       <fieldset className="scenario-picker">
-        <legend>选择验证场景</legend>
+        <legend>选择订单特征</legend>
         <div>
           {scenarios.map((item) => (
             <label
@@ -148,7 +165,7 @@ export function DemoOrderForm({ customers, token, onCancel, onCreated }: Props) 
           className="primary-button"
           type="button"
           onClick={() => void createOrder()}
-          disabled={busy || !customerId || productName.trim().length < 2}
+          disabled={busy || !customerId || productName.trim().length < 2 || !amountValid}
         >
           {busy ? "正在创建…" : "创建订单"}
         </button>

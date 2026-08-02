@@ -12,7 +12,11 @@ const labels: Record<string, string> = {
   ESCALATED: "已升级",
   RESOLVED: "已解决",
   UNRESOLVABLE: "无法解决",
-  DELIVERED: "已签收"
+  DELIVERED: "已签收",
+  REFUNDED: "已退款",
+  AFTER_SALES_PROCESSING: "售后处理中",
+  REFUND_REJECTED: "退款未通过",
+  AFTER_SALES_FAILED: "处理失败"
 };
 
 export function StatusPill({ status, label }: { status: string; label?: string }) {

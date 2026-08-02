@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { DemoOrderForm } from "../components/DemoOrderForm";
@@ -12,6 +13,7 @@ const titles = {
 } as const;
 
 export function OrdersPage() {
+  const navigate = useNavigate();
   const { token, user } = useAuth();
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,6 +70,16 @@ export function OrdersPage() {
     void loadOrders().catch(() => {
       setError("订单已创建，但列表刷新失败。请点击刷新订单列表。");
     });
+  }
+
+  function openAfterSales(order: OrderView) {
+    if (order.ticket_id) {
+      navigate(`/chat?ticket_id=${encodeURIComponent(order.ticket_id)}`);
+      return;
+    }
+    navigate(
+      `/chat?order_id=${encodeURIComponent(order.id)}&order_number=${encodeURIComponent(order.order_number)}`,
+    );
   }
 
   return (
@@ -131,9 +143,15 @@ export function OrdersPage() {
                 <strong>¥{order.amount}</strong>
               </div>
               <div className="order-entry__status">
-                <StatusPill status={order.status} />
-                {order.ticket_status && <StatusPill status={order.ticket_status} />}
+                <StatusPill status={order.lifecycle_status} />
               </div>
+              {user.role === "CUSTOMER" && (
+                <div className="order-entry__action">
+                  <button className="secondary-button" onClick={() => openAfterSales(order)}>
+                    {order.ticket_id ? "查看售后" : "申请售后"}
+                  </button>
+                </div>
+              )}
               {(user.role === "APPROVER" || user.role === "ADMIN") && order.approval_status && (
                 <div className="order-entry__relation">
                   <small>退款审批</small>

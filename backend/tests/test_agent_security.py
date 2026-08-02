@@ -5,7 +5,14 @@ from test_agent_graph import _tool_call, create_ticket, runtime_with
 
 from refund_agent.domain.enums import ApprovalStatus, TicketStatus
 from refund_agent.infrastructure.database import SessionLocal
-from refund_agent.models import ApprovalTask, AuditEvent, RefundRequest, Ticket
+from refund_agent.models import (
+    ApprovalTask,
+    AuditEvent,
+    ManualReviewTask,
+    Message,
+    RefundRequest,
+    Ticket,
+)
 
 
 def test_model_cannot_submit_refund_amount_or_approval_state() -> None:
@@ -67,14 +74,29 @@ def test_prompt_injection_cannot_access_or_refund_another_customers_order() -> N
         assert ticket is not None
         assert ticket.status == TicketStatus.REJECTED
         assert ticket.order_id is None
+        assert ticket.submitted_order_number == "ORD-500-OTHER"
         assert refund is None
+        assert (
+            db.scalar(select(ManualReviewTask).where(ManualReviewTask.ticket_id == ticket_id))
+            is None
+        )
+        response = db.scalar(
+            select(Message).where(
+                Message.conversation_id == ticket.conversation_id,
+                Message.dedup_key == f"{ticket_id}:terminal:{TicketStatus.REJECTED}",
+            )
+        )
+        assert response is not None
+        assert response.content == (
+            "未找到订单 ORD-500-OTHER，或该订单不属于当前账号。请核对订单号后重试。"
+        )
 
 
 def test_unknown_or_excessive_tool_calls_are_rejected_before_execution() -> None:
     unknown_ticket_id = create_ticket("调用未注册支付工具")
-    runtime_with(
-        _tool_call("execute_payment", {"amount": "1.00"}, "unknown-payment")
-    ).start(unknown_ticket_id)
+    runtime_with(_tool_call("execute_payment", {"amount": "1.00"}, "unknown-payment")).start(
+        unknown_ticket_id
+    )
 
     excessive_ticket_id = create_ticket("同时执行很多工具")
     calls = [
@@ -105,6 +127,14 @@ def test_unknown_or_excessive_tool_calls_are_rejected_before_execution() -> None
             db.get(Ticket, ticket_id).status == TicketStatus.MANUAL_REVIEW  # type: ignore[union-attr]
             for ticket_id in (unknown_ticket_id, excessive_ticket_id)
         )
+        categories = set(
+            db.scalars(
+                select(ManualReviewTask.category).where(
+                    ManualReviewTask.ticket_id.in_([unknown_ticket_id, excessive_ticket_id])
+                )
+            )
+        )
+        assert categories == {"SECURITY_REJECTION"}
 
 
 def test_tampered_approval_resume_version_cannot_execute_payment() -> None:
@@ -137,6 +167,4 @@ def test_tampered_approval_resume_version_cannot_execute_payment() -> None:
         )
 
     with SessionLocal() as db:
-        assert db.scalar(
-            select(RefundRequest).where(RefundRequest.ticket_id == ticket_id)
-        ) is None
+        assert db.scalar(select(RefundRequest).where(RefundRequest.ticket_id == ticket_id)) is None

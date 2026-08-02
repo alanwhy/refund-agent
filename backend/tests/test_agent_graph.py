@@ -14,6 +14,7 @@ from refund_agent.models import (
     ApprovalTask,
     AuditEvent,
     Conversation,
+    ManualReviewTask,
     Message,
     RefundRequest,
     Ticket,
@@ -223,3 +224,53 @@ def test_unknown_payment_is_never_retried() -> None:
         assert ticket.status == TicketStatus.MANUAL_REVIEW
         assert refund is not None
         assert refund.status == "UNKNOWN"
+        manual_review = db.scalar(
+            select(ManualReviewTask).where(ManualReviewTask.ticket_id == ticket_id)
+        )
+        assert manual_review is not None
+        assert manual_review.category == "PAYMENT_UNKNOWN"
+
+
+def test_missing_order_is_rejected_with_deterministic_safe_message() -> None:
+    ticket_id = create_ticket("退款 ORD-400，不想要了")
+    model = ScriptedModel(
+        responses=[
+            _tool_call(
+                "SubmitRefundContext",
+                {
+                    "order_number": "ORD-400",
+                    "reason": "不想要了",
+                    "requested_action": "REFUND",
+                },
+                "missing-order",
+            ),
+            AIMessage(content="不应调用模型生成这条回复"),
+        ]
+    )
+    runtime = AgentRuntime(graph=build_refund_graph(model, checkpointer=InMemorySaver()))
+
+    runtime.start(ticket_id)
+
+    with SessionLocal() as db:
+        ticket = db.get(Ticket, ticket_id)
+        assert ticket is not None
+        assert ticket.status == TicketStatus.REJECTED
+        assert ticket.submitted_order_number == "ORD-400"
+        assert ticket.order_id is None
+        message = db.scalar(
+            select(Message).where(
+                Message.conversation_id == ticket.conversation_id,
+                Message.dedup_key == f"{ticket_id}:terminal:{TicketStatus.REJECTED}",
+            )
+        )
+        assert message is not None
+        assert message.content == (
+            "未找到订单 ORD-400，或该订单不属于当前账号。请核对订单号后重试。"
+        )
+        assert db.scalar(select(ApprovalTask).where(ApprovalTask.ticket_id == ticket_id)) is None
+        assert (
+            db.scalar(select(ManualReviewTask).where(ManualReviewTask.ticket_id == ticket_id))
+            is None
+        )
+        assert db.scalar(select(RefundRequest).where(RefundRequest.ticket_id == ticket_id)) is None
+    assert len(model.captured_messages) == 1

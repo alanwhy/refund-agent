@@ -14,8 +14,13 @@ from refund_agent.agent.state import RefundAgentState
 from refund_agent.agent.tools import READ_TOOL_NAMES, parse_tool_content
 from refund_agent.audit.service import append_audit
 from refund_agent.config import get_settings
-from refund_agent.domain.enums import TicketIntent, TicketStatus
+from refund_agent.domain.enums import (
+    ManualReviewCategory,
+    TicketIntent,
+    TicketStatus,
+)
 from refund_agent.infrastructure.database import SessionLocal
+from refund_agent.manual_review.service import CUSTOMER_MESSAGE, ensure_manual_review
 from refund_agent.models import Message, Order, RefundRequest, Ticket
 
 MAX_TOOL_CALLS_PER_STEP = 4
@@ -102,8 +107,7 @@ def reason_and_route_node(
                     ticket_id=state["ticket_id"],
                     details={"tool": call["name"], "arguments": call["args"]},
                     event_key=(
-                        f"{state['ticket_id']}:refund-v2:tool:{logical_step}:"
-                        f"{call['id']}:requested"
+                        f"{state['ticket_id']}:refund-v2:tool:{logical_step}:{call['id']}:requested"
                     ),
                     run_id=state["run_id"],
                     node_name="reason_and_route",
@@ -119,8 +123,7 @@ def reason_and_route_node(
                         "tool_names": [call["name"] for call in response.tool_calls],
                     },
                     event_key=(
-                        f"{state['ticket_id']}:refund-v2:security:{logical_step}:"
-                        f"{invalid_reason}"
+                        f"{state['ticket_id']}:refund-v2:security:{logical_step}:{invalid_reason}"
                     ),
                     run_id=state["run_id"],
                     node_name="reason_and_route",
@@ -277,13 +280,12 @@ def ask_user(state: RefundAgentState) -> dict[str, Any]:
 
 
 def validate_context(state: RefundAgentState) -> dict[str, Any]:
-    context = SubmitRefundContext.model_validate(
-        _control_args(state, SubmitRefundContext.__name__)
-    )
+    context = SubmitRefundContext.model_validate(_control_args(state, SubmitRefundContext.__name__))
     with SessionLocal() as db:
         ticket = db.get(Ticket, state["ticket_id"])
         if ticket is None:
             raise ValueError("Ticket not found")
+        ticket.submitted_order_number = context.order_number
         order = db.scalar(
             select(Order).where(
                 Order.order_number == context.order_number,
@@ -293,6 +295,19 @@ def validate_context(state: RefundAgentState) -> dict[str, Any]:
         if order is None:
             ticket.status = TicketStatus.REJECTED
             ticket.current_step = "order_rejected"
+            append_audit(
+                db,
+                action="order.rejected",
+                entity_type="order",
+                ticket_id=ticket.id,
+                details={
+                    "submitted_order_number": context.order_number,
+                    "reason": "ORDER_NOT_FOUND_OR_NOT_OWNED",
+                },
+                event_key=f"{ticket.id}:refund-v2:order-rejected",
+                run_id=state["run_id"],
+                node_name="validate_context",
+            )
             db.commit()
             return {
                 "route": "respond",
@@ -334,18 +349,22 @@ def response_node(
             ticket = db.get(Ticket, state["ticket_id"])
             if ticket is None:
                 raise ValueError("Ticket not found")
-            refund = db.scalar(
-                select(RefundRequest).where(RefundRequest.ticket_id == ticket.id)
-            )
+            refund = db.scalar(select(RefundRequest).where(RefundRequest.ticket_id == ticket.id))
             if ticket.status == TicketStatus.COMPLETED and refund is not None:
                 fallback = (
                     f"退款 ¥{refund.amount:.2f} 已发起，预计 1–3 个工作日到账。"
                     "请在 7 天内寄回商品。"
                 )
             elif ticket.status == TicketStatus.REJECTED:
-                fallback = "该申请未通过退款校验。如有疑问，请联系人工客服。"
+                order_number = ticket.submitted_order_number or state.get("order_number")
+                if state.get("last_error_code") == "ORDER_NOT_FOUND_OR_NOT_OWNED":
+                    fallback = (
+                        f"未找到订单 {order_number}，或该订单不属于当前账号。请核对订单号后重试。"
+                    )
+                else:
+                    fallback = "该申请未通过退款校验。如有疑问，请联系人工客服。"
             elif ticket.status == TicketStatus.MANUAL_REVIEW:
-                fallback = "当前申请需要人工核查，售后专员会继续处理。"
+                fallback = CUSTOMER_MESSAGE
             else:
                 fallback = "退款申请已处理，请查看工单最新状态。"
             structured = {
@@ -355,25 +374,36 @@ def response_node(
                 "policy_evidence": ticket.policy_evidence,
                 "risk_reasons": ticket.risk_reasons,
             }
-            try:
-                message = invoke_audited(
-                    model,
-                    [
-                        SystemMessage(content=read_prompt("notification.md")),
-                        HumanMessage(content=json.dumps(structured, ensure_ascii=False)),
-                    ],
-                    db=db,
-                    ticket_id=ticket.id,
-                    run_id=state["run_id"],
-                    node_name="respond",
-                    logical_step=state.get("agent_step_count", 0) + 1,
-                )
-                content = str(message.content).strip() or fallback
-                if refund and str(refund.amount) not in content:
-                    content = fallback
-            except Exception:
+            deterministic = (
+                state.get("last_error_code") == "ORDER_NOT_FOUND_OR_NOT_OWNED"
+                or ticket.status == TicketStatus.MANUAL_REVIEW
+            )
+            if deterministic:
                 content = fallback
-            dedup_key = f"{ticket.id}:terminal:{ticket.status}"
+            else:
+                try:
+                    message = invoke_audited(
+                        model,
+                        [
+                            SystemMessage(content=read_prompt("notification.md")),
+                            HumanMessage(content=json.dumps(structured, ensure_ascii=False)),
+                        ],
+                        db=db,
+                        ticket_id=ticket.id,
+                        run_id=state["run_id"],
+                        node_name="respond",
+                        logical_step=state.get("agent_step_count", 0) + 1,
+                    )
+                    content = str(message.content).strip() or fallback
+                    if refund and str(refund.amount) not in content:
+                        content = fallback
+                except Exception:
+                    content = fallback
+            dedup_key = (
+                f"{ticket.id}:manual-review"
+                if ticket.status == TicketStatus.MANUAL_REVIEW
+                else f"{ticket.id}:terminal:{ticket.status}"
+            )
             existing = db.scalar(select(Message).where(Message.dedup_key == dedup_key))
             if existing is None:
                 db.add(
@@ -397,20 +427,25 @@ def manual_review(state: RefundAgentState) -> dict[str, Any]:
         ticket = db.get(Ticket, state["ticket_id"])
         if ticket is None:
             raise ValueError("Ticket not found")
-        ticket.status = TicketStatus.MANUAL_REVIEW
-        ticket.current_step = "manual_review"
-        ticket.waiting_for = None
-        message = "当前申请需要人工核查，售后专员会继续处理。"
-        dedup_key = f"{ticket.id}:manual:{state.get('last_error_code') or 'unknown'}"
-        if db.scalar(select(Message).where(Message.dedup_key == dedup_key)) is None:
-            db.add(
-                Message(
-                    conversation_id=ticket.conversation_id,
-                    sender="ASSISTANT",
-                    content=message,
-                    dedup_key=dedup_key,
-                )
-            )
+        error_code = state.get("last_error_code")
+        if error_code in {
+            "UNKNOWN_TOOL",
+            "TOO_MANY_TOOL_CALLS",
+            "MIXED_CONTROL_CALL",
+            "INVALID_CONTROL_ARGUMENTS",
+        }:
+            category = ManualReviewCategory.SECURITY_REJECTION
+        elif error_code in {"MODEL_UNAVAILABLE", "INVALID_MODEL_MESSAGE", "AGENT_STEP_LIMIT"}:
+            category = ManualReviewCategory.MODEL_FAILURE
+        else:
+            category = ManualReviewCategory.DATA_INCONSISTENCY
+        ensure_manual_review(
+            db,
+            ticket=ticket,
+            category=category,
+            run_id=state["run_id"],
+            node_name="manual_review",
+        )
         append_audit(
             db,
             action="agent.manual_review",
@@ -423,4 +458,4 @@ def manual_review(state: RefundAgentState) -> dict[str, Any]:
             node_name="manual_review",
         )
         db.commit()
-    return {"messages": [AIMessage(content=message)]}
+    return {"messages": [AIMessage(content=CUSTOMER_MESSAGE)]}

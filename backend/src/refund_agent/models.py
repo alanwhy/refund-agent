@@ -72,6 +72,9 @@ class Ticket(Base):
     customer_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id"), index=True)
     order_id: Mapped[str | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
+    submitted_order_number: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, index=True
+    )
     intent: Mapped[str | None] = mapped_column(String(32), nullable=True)
     intent_confidence: Mapped[float | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="CREATED", index=True)
@@ -127,6 +130,30 @@ class ApprovalTask(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ManualReviewTask(Base):
+    __tablename__ = "manual_review_tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("tickets.id"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    submitted_order_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    technical_summary: Mapped[str] = mapped_column(String(500))
+    assigned_to: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    version: Mapped[int] = mapped_column(default=1)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditEvent(Base):

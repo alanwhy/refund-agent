@@ -7,8 +7,14 @@ from sqlalchemy import select
 from refund_agent.adapters.payment import MockPaymentGateway
 from refund_agent.agent.state import RefundAgentState
 from refund_agent.audit.service import append_audit
-from refund_agent.domain.enums import ApprovalStatus, RefundStatus, TicketStatus
+from refund_agent.domain.enums import (
+    ApprovalStatus,
+    ManualReviewCategory,
+    RefundStatus,
+    TicketStatus,
+)
 from refund_agent.infrastructure.database import SessionLocal
+from refund_agent.manual_review.service import ensure_manual_review
 from refund_agent.models import ApprovalTask, Order, RefundRequest, Ticket
 
 
@@ -23,9 +29,7 @@ def execute_refund_node(
                 raise PermissionError("Order ownership validation failed")
             if ticket.calculated_amount is None:
                 raise ValueError("Refund amount was not calculated")
-            approval = db.scalar(
-                select(ApprovalTask).where(ApprovalTask.ticket_id == ticket.id)
-            )
+            approval = db.scalar(select(ApprovalTask).where(ApprovalTask.ticket_id == ticket.id))
             if state.get("approval_required"):
                 if approval is None or approval.status != ApprovalStatus.APPROVED:
                     raise PermissionError("Required approval is missing")
@@ -38,9 +42,7 @@ def execute_refund_node(
                 raise ValueError("Refund amount exceeds deterministic cap")
 
             key = f"{ticket.id}:refund"
-            request = db.scalar(
-                select(RefundRequest).where(RefundRequest.idempotency_key == key)
-            )
+            request = db.scalar(select(RefundRequest).where(RefundRequest.idempotency_key == key))
             if request is None:
                 request = RefundRequest(
                     ticket_id=ticket.id,
@@ -56,8 +58,13 @@ def execute_refund_node(
                 db.commit()
                 return {"refund_request_id": request.id}
             if request.status == RefundStatus.UNKNOWN:
-                ticket.status = TicketStatus.MANUAL_REVIEW
-                ticket.current_step = "payment_unknown"
+                ensure_manual_review(
+                    db,
+                    ticket=ticket,
+                    category=ManualReviewCategory.PAYMENT_UNKNOWN,
+                    run_id=state["run_id"],
+                    node_name="execute_refund",
+                )
                 db.commit()
                 return {"refund_request_id": request.id}
 
@@ -69,8 +76,13 @@ def execute_refund_node(
                 ticket.status = TicketStatus.COMPLETED
                 ticket.current_step = "completed"
             elif result.status == RefundStatus.UNKNOWN:
-                ticket.status = TicketStatus.MANUAL_REVIEW
-                ticket.current_step = "payment_unknown"
+                ensure_manual_review(
+                    db,
+                    ticket=ticket,
+                    category=ManualReviewCategory.PAYMENT_UNKNOWN,
+                    run_id=state["run_id"],
+                    node_name="execute_refund",
+                )
             else:
                 ticket.status = TicketStatus.FAILED
                 ticket.current_step = "payment_failed"

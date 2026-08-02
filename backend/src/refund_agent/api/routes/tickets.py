@@ -124,7 +124,7 @@ def _summary(db: DbSession, ticket: Ticket) -> TicketSummary:
         waiting_for=ticket.waiting_for,
         current_question=ticket.current_question,
         intent=ticket.intent,
-        order_number=order.order_number if order else None,
+        order_number=order.order_number if order else ticket.submitted_order_number,
         product_name=order.product_name if order else None,
         calculated_amount=ticket.calculated_amount,
         risk_level=ticket.risk_level,
